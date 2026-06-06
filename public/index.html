@@ -207,11 +207,25 @@
 
   <!-- Import modal -->
   <div id="importModal" class="modal hidden">
-    <div class="modal-body">
+    <div class="modal-body" style="width: 580px;">
       <button class="close" id="importClose">×</button>
       <h2>Import your existing locations</h2>
-      <p>Upload a CSV, Excel, or JSON file. AI will auto-map your columns onto our schema.</p>
-      <input type="file" id="importFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.json" />
+      <p style="margin-bottom: 16px; color: var(--text-2); line-height: 1.5;">
+        Upload your store list, branch directory, or competitor locations. AI auto-maps your column headers.
+      </p>
+      
+      <div class="import-info-box" style="background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; font-size: 12.5px; line-height: 1.55; color: var(--text-2);">
+        <strong style="color: var(--ganit-blue); display: block; margin-bottom: 6px;">📋 What to expect:</strong>
+        <ul style="margin: 0; padding-left: 18px;">
+          <li><strong>Supported formats:</strong> CSV, Excel (.xlsx, .xls), and JSON.</li>
+          <li><strong>Name column:</strong> Required to identify and label your pins.</li>
+          <li><strong>Coordinates preferred:</strong> Columns with Latitude/Longitude will plot instantly and precisely.</li>
+          <li><strong>Address geocoding fallback:</strong> If coordinates are missing, we will automatically geocode the address to find the coordinates and plot the location (up to 50 addresses per import).</li>
+          <li><strong>If data is missing:</strong> Rows without coordinates or a valid address will be listed in the preview but cannot be plotted.</li>
+        </ul>
+      </div>
+
+      <input type="file" id="importFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.json" style="margin-bottom: 12px;" />
       <div id="importStatus" class="status"></div>
       <pre id="importResult" class="import-result hidden"></pre>
     </div>

@@ -321,6 +321,24 @@ router.post("/import", async (req, res) => {
     const parsed = parseFile(buf, filename);
     const mapping = await suggestColumnMapping(parsed.headers, parsed.rows);
     const mapped = applyMapping(parsed.rows, mapping as any);
+
+    // Geocode missing lat/lng coordinates if address is present
+    const needsGeocoding = mapped.filter(loc => (loc.lat == null || loc.lng == null) && loc.address);
+    // Limit to first 50 to avoid API rate limits/timeouts
+    const toGeocode = needsGeocoding.slice(0, 50);
+    const geocodePromises = toGeocode.map(async (loc) => {
+      try {
+        const geo = await geocodeIndia(loc.address!);
+        if (geo) {
+          loc.lat = geo.lat;
+          loc.lng = geo.lng;
+        }
+      } catch (err) {
+        console.error("Geocoding failed for imported location:", loc.address, err);
+      }
+    });
+    await Promise.all(geocodePromises);
+
     res.json({ headers: parsed.headers, mapping, count: mapped.length, locations: mapped.slice(0, 500) });
   } catch (e) {
     console.error("import failed:", e);
