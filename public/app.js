@@ -257,6 +257,7 @@ async function onAnalyze() {
   document.getElementById("summary").classList.add("hidden");
   document.getElementById("legend").classList.add("hidden");
   document.getElementById("execBtn")?.classList.add("hidden");
+  setAnalyzeBusy(true);
   startProgress();
 
   try {
@@ -284,6 +285,7 @@ async function onAnalyze() {
           lastResult = evt.data;
           renderResult(evt.data);
           finishProgress();
+          setAnalyzeBusy(false);
         } else if (evt.event === "error") throw new Error(evt.data.message);
       }
     }
@@ -291,7 +293,18 @@ async function onAnalyze() {
     console.error(e);
     setStatus(`Error: ${e.message}`, "error");
     document.getElementById("progressPanel").classList.add("hidden");
+    setAnalyzeBusy(false);
   }
+}
+
+function setAnalyzeBusy(on) {
+  const btn = document.getElementById("analyzeBtn");
+  if (!btn) return;
+  btn.classList.toggle("analyzing", on);
+  btn.disabled = on;
+  btn.innerHTML = on
+    ? `<i class="uil uil-hourglass"></i>Analyzing location`
+    : `<i class="uil uil-bolt-alt"></i>Analyze location`;
 }
 
 function parseSSE(raw) {
@@ -1313,15 +1326,15 @@ function openExecModal() {
     </div>
     
     <div class="exec-body" style="max-height: 58vh; overflow-y: auto;">
-      <div class="exec-actions">
-        <button id="savePdfBtn" class="primary mini">Save as PDF</button>
-        <button id="saveWordBtn" class="ghost mini">Save as Word</button>
-      </div>
-
-      <!-- Tab Selector Header -->
-      <div style="display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 12px; position: sticky; top: -24px; background: #ffffff; z-index: 100;">
-        <button id="execTabSummary" class="primary mini" style="width: auto; padding: 8px 16px;"><i class="uil uil-file-alt"></i>Summary Insights</button>
-        <button id="execTabDetails" class="ghost mini" style="width: auto; padding: 8px 16px; border: 1px solid var(--border);"><i class="uil uil-search"></i>Detailed Site Metrics</button>
+      <div class="exec-toolbar">
+        <div class="exec-tabs">
+          <button id="execTabSummary" class="primary mini"><i class="uil uil-file-alt"></i>Summary Insights</button>
+          <button id="execTabDetails" class="ghost mini"><i class="uil uil-search"></i>Detailed Site Metrics</button>
+        </div>
+        <div class="exec-actions">
+          <button id="savePdfBtn" class="primary mini">Save as PDF</button>
+          <button id="saveWordBtn" class="ghost mini">Save as Word</button>
+        </div>
       </div>
 
       <!-- View 1: Summary -->
