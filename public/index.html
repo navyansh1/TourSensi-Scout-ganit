@@ -119,6 +119,15 @@
 
     <div id="map"></div>
 
+    <!-- Compass (north is always up in the Maps JS view) -->
+    <div id="compass" class="compass" title="Map orientation — North is up">
+      <span class="cmp-n">N</span>
+      <span class="cmp-e">E</span>
+      <span class="cmp-s">S</span>
+      <span class="cmp-w">W</span>
+      <span class="cmp-needle">▲</span>
+    </div>
+
     <!-- Floating legend with overlay icon explanations -->
     <div id="legend" class="legend hidden">
       <div class="legend-title">Heatmap (suitability)</div>
@@ -131,13 +140,16 @@
       <div class="legend-title">Map pins</div>
       <div class="legend-row dot"><div class="swatch" style="background:#22c55e"></div>Your existing site</div>
       <div class="legend-row dot"><div class="swatch" style="background:#dc2626"></div>Competitor</div>
-      <div class="legend-row dot"><div class="swatch" style="background:#1a2b8c"></div>Property for sale</div>
+      <div class="legend-row dot"><div class="swatch" style="background:#1a00d9"></div>Property for sale</div>
+      <!-- "Context overlays" legend hidden — the top-bar "Show on map" dropdown
+           now handles layer visibility. Kept here for reference / easy restore.
       <hr/>
       <div class="legend-title">Context overlays</div>
       <div class="legend-row">🚇 Metro / station</div>
       <div class="legend-row">🏬 Mall</div>
       <div class="legend-row">🏫 School / 🎓 university</div>
       <div class="legend-row">🏥 Hospital</div>
+      -->
     </div>
 
     <!-- Hex detail panel -->
