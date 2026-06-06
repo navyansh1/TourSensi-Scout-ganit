@@ -1584,6 +1584,20 @@ async function onImportFile(e) {
   out.textContent = JSON.stringify(data.mapping, null, 2) + "\n\nPreview (first 3):\n" +
     JSON.stringify(data.locations.slice(0, 3), null, 2);
   out.classList.remove("hidden");
+
+  // Plot locations on the map
+  const validLocs = (data.locations || []).filter(l => l.lat != null && l.lng != null);
+  if (validLocs.length > 0) {
+    const bounds = new google.maps.LatLngBounds();
+    validLocs.forEach(p => {
+      addCompetitorPin(p, "#22c55e", p.name, "own");
+      bounds.extend({ lat: p.lat, lng: p.lng });
+    });
+    if (map) {
+      map.fitBounds(bounds);
+    }
+    status.textContent = `✓ Imported ${data.count} locations. Plotted ${validLocs.length} pins on the map.`;
+  }
 }
 
 // ---------- utils ----------
