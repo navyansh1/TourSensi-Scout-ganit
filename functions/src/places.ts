@@ -84,6 +84,26 @@ export async function competitorsInArea(opts: {
   });
 }
 
+// Generic category words that must NOT, on their own, qualify a place as "yours".
+// Otherwise searching "More Supermarket" wrongly tags "Grace Supermarket".
+const GENERIC_TOKENS = new Set([
+  "bank", "atm", "supermarket", "market", "store", "stores", "retail", "fresh",
+  "smart", "mart", "shop", "shopping", "hyper", "hypermarket", "grocery", "groceries",
+  "the", "of", "and", "india", "ltd", "limited", "pvt", "co", "company", "centre", "center",
+]);
+
+// Distinctive brand tokens extracted from the keyword list — a returned place's
+// name must contain at least one of these to be accepted as the user's own site.
+function brandTokens(keywords: string[]): string[] {
+  const toks = new Set<string>();
+  for (const kw of keywords) {
+    for (const raw of kw.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (raw.length >= 3 && !GENERIC_TOKENS.has(raw)) toks.add(raw);
+    }
+  }
+  return Array.from(toks);
+}
+
 // Pull the user's own brand locations in an area, e.g. "HDFC Bank ATM Anna Nagar".
 export async function brandLocationsInArea(opts: {
   brandKeywords: string[];
@@ -101,8 +121,22 @@ export async function brandLocationsInArea(opts: {
       }),
     ),
   );
-  // Deduplicate by Places id
+
+  // Verify each result's NAME actually contains a distinctive brand token —
+  // Places text search is fuzzy and will return same-category competitors.
+  const tokens = brandTokens(opts.brandKeywords);
+  const matchesBrand = (name: string) => {
+    if (!tokens.length) return true; // nothing distinctive to check against
+    const n = name.toLowerCase();
+    return tokens.some(t => new RegExp(`\\b${t}`, "i").test(n));
+  };
+
   const map = new Map<string, Poi>();
-  for (const list of results) for (const p of list) map.set(p.id, { ...p, brand: opts.brandKeywords[0] });
+  for (const list of results) {
+    for (const p of list) {
+      if (!matchesBrand(p.name)) continue; // drop false positives
+      map.set(p.id, { ...p, brand: opts.brandKeywords[0] });
+    }
+  }
   return Array.from(map.values());
 }

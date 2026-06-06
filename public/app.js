@@ -195,6 +195,18 @@ function bindUI() {
   document.getElementById("infoBtn").onclick = () => document.getElementById("infoModal").classList.remove("hidden");
   document.getElementById("infoClose").onclick = () => document.getElementById("infoModal").classList.add("hidden");
 
+  // "Show on map" layers dropdown
+  const layersBtn = document.getElementById("layersBtn");
+  const layersMenu = document.getElementById("layersMenu");
+  if (layersBtn && layersMenu) {
+    layersBtn.onclick = (e) => { e.stopPropagation(); layersMenu.classList.toggle("hidden"); };
+    document.addEventListener("click", (e) => {
+      if (!layersMenu.classList.contains("hidden") && !layersMenu.contains(e.target) && e.target !== layersBtn) {
+        layersMenu.classList.add("hidden");
+      }
+    });
+  }
+
   initSidebarResizer();
 
   // Settings panel + theme picker
@@ -313,17 +325,21 @@ function startProgress() {
     </ul>`;
   setStatus("", "");
 
-  // Auto-tick top to bottom. Slightly varied cadence so it feels organic, and
-  // we deliberately stop one short of the last item — the real result flushes it.
+  // Auto-tick top to bottom at a calm, steady pace. A full analysis takes
+  // ~25-40s, so we spread the ticks over ~24s (≈3s each) and deliberately HOLD
+  // on the last item ("Scoring…") until the real result arrives — at which point
+  // finishProgress() snaps everything to done. This avoids the old "all fast then
+  // one hangs forever" feel.
   clearInterval(_tickTimer);
+  const STEP_MS = 3000; // steady ~3s per item
   const advance = () => {
     if (_tickIdx >= PROGRESS_ITEMS.length - 1) return; // hold the last for the result
     completeTick(_tickIdx);
     _tickIdx++;
     setRunning(_tickIdx);
-    _tickTimer = setTimeout(advance, 900 + Math.random() * 1100);
+    _tickTimer = setTimeout(advance, STEP_MS);
   };
-  _tickTimer = setTimeout(advance, 700);
+  _tickTimer = setTimeout(advance, STEP_MS);
 }
 
 function completeTick(i) {
@@ -380,12 +396,13 @@ function renderResult(data) {
   for (const h of data.hexes) drawHex(h);
   document.getElementById("legend").classList.remove("hidden");
 
-  // Pins
+  // Pins — your sites + competitors are ALWAYS shown by default.
   for (const p of data.competitorsList) addCompetitorPin(p, "#dc2626", "Competitor");
   for (const p of data.ownList)         addCompetitorPin(p, "#22c55e", "Your site", "own");
 
-  // Context overlays
-  for (const o of (data.overlay || [])) addOverlayPin(o);
+  // Context overlays (metro/mall/school/…) are kept hidden by default and only
+  // shown when the user ticks them in the "Show on map" dropdown.
+  buildLayerControl(data.overlay || []);
 
   // Headline stat card
   document.getElementById("resultStats").innerHTML = renderResultStats(data);
@@ -412,8 +429,8 @@ function renderResult(data) {
     return `
       <li class="tagged-card" data-hex="${r.hex}" style="--score-color: ${scColor}">
         <div class="rec-card-header">
-          ${r.tag ? `<div class="rec-card-tag">${TAG_LABELS[r.tag]}</div>` : "<div></div>"}
-          <div class="rec-card-score">${r.final}/100</div>
+          <div class="rec-rank"><span class="rank-num">#${i + 1}</span></div>
+          <div class="rec-card-score">Score ${r.final}/100</div>
         </div>
         <div class="rec-card-summary">
           <div style="font-weight: 700; margin-bottom: 2px; color: var(--ganit-blue);">${locDesc}</div>
@@ -463,6 +480,10 @@ function renderResult(data) {
     };
   });
 
+  // Regions to avoid — the worst-scoring distinct zones (spread out so they're
+  // not all the same cluster). Click to fly there + open the panel.
+  renderAvoidList(data);
+
   // Area context (wiki + pin)
   document.getElementById("contextPanel").innerHTML = renderContext(data);
 
@@ -493,9 +514,43 @@ function renderResultStats(data) {
     <div class="stat-grid">
       ${stat(c.competitors ?? 0, "Competitors", "#dc2626")}
       ${stat(c.ownBrand ?? 0, "Your sites", "#16a34a")}
-      ${stat(`${best}`, "Best zone", scoreColor(best))}
-      ${stat(`${growth}`, "Growth", "var(--ganit-blue)")}
+      ${stat(`${best}`, "Top site score", scoreColor(best))}
+      ${stat(`${growth}`, "Growth outlook", "var(--ganit-blue)")}
     </div>`;
+}
+
+// The 3 worst zones, spaced apart so they aren't one tight cluster.
+function renderAvoidList(data) {
+  const el = document.getElementById("avoidList");
+  if (!el) return;
+  const sorted = [...data.hexes].sort((a, b) => a.final - b.final);
+  const picks = [];
+  for (const h of sorted) {
+    if (picks.length >= 3) break;
+    // keep them spread: skip if within ~600m of an already-picked avoid zone
+    if (picks.some(p => Math.hypot(p.lat - h.lat, p.lng - h.lng) < 0.006)) continue;
+    picks.push(h);
+  }
+  el.innerHTML = picks.map(h => {
+    const why = h.signals.competitorCount >= 3 ? `${h.signals.competitorCount} competitors crowd this spot`
+      : h.demand < 35 ? "very low demand nearby"
+      : h.access < 35 ? "poor accessibility"
+      : "weak overall fundamentals";
+    return `<li class="avoid-card" data-hex="${h.hex}" style="--score-color:${scoreColor(h.final)}">
+      <div class="avoid-row">
+        <span class="avoid-score">Score ${h.final}/100</span>
+        <span class="avoid-coords">${h.lat.toFixed(4)}, ${h.lng.toFixed(4)}</span>
+      </div>
+      <div class="avoid-why">⚠ ${escapeHtml(why)}</div>
+    </li>`;
+  }).join("") || `<li class="avoid-empty">No clearly bad zones — this area scores reasonably throughout.</li>`;
+
+  el.querySelectorAll("li.avoid-card").forEach(li => {
+    li.onclick = () => {
+      const h = data.hexes.find(x => x.hex === li.dataset.hex);
+      if (h) { glideToZone(h); highlightHexOnMap(h); showHexPanel(h, data); }
+    };
+  });
 }
 
 function renderExecMini(data) {
@@ -507,15 +562,23 @@ function renderExecMini(data) {
       <div class="em-rec ${ex.recommendation}">${ex.recommendation}</div>
     </div>
     <div class="em-stars">${stars}</div>
-    ${ex.marketState ? `<div class="em-market">📍 ${escapeHtml(ex.marketState)}</div>` : ""}
-    <div class="em-bottom">${escapeHtml(ex.bottomLine || "")}</div>
+    ${ex.marketState ? `<div class="em-market">📍 ${boldKeywords(ex.marketState)}</div>` : ""}
+    ${ex.bottomLine ? `<ul class="em-points">${bulletize(ex.bottomLine).map(b => `<li>${boldKeywords(b)}</li>`).join("")}</ul>` : ""}
     ${(ex.alternatives && ex.alternatives.length) ? `
       <div class="em-alts">
         <div class="em-alts-label">Consider instead</div>
-        ${ex.alternatives.map(a => `<div class="em-alt">↪ ${escapeHtml(a)}</div>`).join("")}
+        ${ex.alternatives.map(a => `<div class="em-alt">↪ ${boldKeywords(a)}</div>`).join("")}
       </div>` : ""}
     <button class="em-cta">📋 Open full executive summary →</button>
   `;
+}
+
+// Split a short prose blurb into clean sentence bullets.
+function bulletize(text) {
+  return String(text || "")
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 1);
 }
 
 function renderContext(data) {
@@ -611,9 +674,11 @@ function addCompetitorPin(p, color, label, kind = "competitor") {
   markers.push(label2);
 }
 
-function addOverlayPin(o) {
+// Create an overlay pin + label but DON'T attach to the map yet. The layer
+// control attaches/detaches them when the user toggles that amenity type.
+function makeOverlayPin(o) {
   const m = new google.maps.Marker({
-    position: { lat: o.lat, lng: o.lng }, map,
+    position: { lat: o.lat, lng: o.lng },
     title: `${o.label || o.kind}: ${o.name}`,
     optimized: true,
     label: { text: o.icon, fontSize: "16px" },
@@ -624,7 +689,7 @@ function addOverlayPin(o) {
   });
   m.poiName = o.name;
   m.addListener("click", () => {
-    const content = `
+    infoWindow.setContent(`
       <div style="font-family: 'Inter', sans-serif; padding: 6px; min-width: 150px;">
         <div style="font-size: 11px; font-weight: 700; color: var(--ganit-blue); text-transform: uppercase; margin-bottom: 2px;">
           ${o.icon} ${escapeHtml(o.label || o.kind)}
@@ -634,20 +699,53 @@ function addOverlayPin(o) {
           ${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}
         </div>
         <a class="gmaps-link" href="${gmapsUrl(o)}" target="_blank" rel="noopener">View on Google Maps ↗</a>
-      </div>
-    `;
-    infoWindow.setContent(content);
+      </div>`);
     infoWindow.open(map, m);
   });
-  markers.push(m);
-
-  // Overlay text name displayed directly next to pin on the map
-  const label2 = makeHTMLLabel({ lat: o.lat, lng: o.lng }, o.name, "marker-label overlay");
-  markers.push(label2);
+  const label = makeHTMLLabel({ lat: o.lat, lng: o.lng }, o.name, "marker-label overlay", /*deferred*/ true);
+  return { marker: m, label };
 }
 
-// HTML labels for competitor/own pins
-function makeHTMLLabel(latLng, text, className) {
+// Build the "Show on map" dropdown from whatever amenity types are present,
+// and wire each to attach/detach its pins. Default: everything OFF.
+let _layerGroups = {};   // factorKey → { label, icon, items:[{marker,label}], on:false }
+function buildLayerControl(overlay) {
+  // tear down any prior layer pins
+  for (const k in _layerGroups) for (const it of _layerGroups[k].items) { it.marker.setMap(null); it.label.setMap(null); }
+  _layerGroups = {};
+
+  for (const o of overlay) {
+    const key = o.factorKey || o.kind || "other";
+    if (!_layerGroups[key]) _layerGroups[key] = { label: (o.label || o.kind || "Places").split(" / ")[0], icon: o.icon || "📍", items: [], on: false };
+    _layerGroups[key].items.push(makeOverlayPin(o));
+  }
+
+  const menu = document.getElementById("layersMenu");
+  const keys = Object.keys(_layerGroups);
+  if (!keys.length) { menu.innerHTML = `<div class="layers-empty">No nearby landmarks found.</div>`; return; }
+  menu.innerHTML = keys.map(k => {
+    const g = _layerGroups[k];
+    return `<label class="layer-row"><input type="checkbox" data-key="${k}" />
+      <span>${g.icon} ${escapeHtml(cap(g.label))}</span><span class="layer-count">${g.items.length}</span></label>`;
+  }).join("") + `<div class="layers-hint">Your sites &amp; competitors are always shown.</div>`;
+
+  menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.onchange = () => toggleLayer(cb.dataset.key, cb.checked);
+  });
+}
+
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+function toggleLayer(key, on) {
+  const g = _layerGroups[key];
+  if (!g) return;
+  g.on = on;
+  for (const it of g.items) { it.marker.setMap(on ? map : null); it.label.setMap(on ? map : null); }
+}
+
+// HTML labels for competitor/own pins. When `deferred` is true the label is NOT
+// attached to the map (the layer control attaches it on demand).
+function makeHTMLLabel(latLng, text, className, deferred = false) {
   function HTMLLabel(latLng, text, className) {
     this.latLng = latLng;
     this.text = text;
@@ -679,7 +777,7 @@ function makeHTMLLabel(latLng, text, className) {
   HTMLLabel.prototype.onRemove = function () { this.div?.remove(); };
   HTMLLabel.prototype.setMap2 = google.maps.OverlayView.prototype.setMap;
   const lbl = new HTMLLabel(latLng, text, className);
-  lbl.setMap(map);
+  if (!deferred) lbl.setMap(map);
   return lbl;
 }
 
@@ -820,6 +918,9 @@ function clearMap() {
   for (const p of hexPolygons) p.setMap(null);
   for (const m of markers) m.setMap(null);
   hexPolygons = []; markers = [];
+  // tear down toggleable layer pins too
+  for (const k in _layerGroups) for (const it of _layerGroups[k].items) { it.marker.setMap(null); it.label.setMap(null); }
+  _layerGroups = {};
   if (selectedPolyHighlight) {
     selectedPolyHighlight.setMap(null);
     selectedPolyHighlight = null;
@@ -833,12 +934,11 @@ function glideToZone(h) {
   if (!map) return;
   const target = { lat: h.lat, lng: h.lng };
   map.panTo(target);            // built-in eased pan
-  const desired = 16;
+  // Gentle dolly-in, but not too tight — 15 keeps the surrounding zones visible.
+  const desired = 15;
   const cur = map.getZoom() ?? 14;
   if (cur < desired) {
-    // step the zoom up a notch shortly after the pan starts for a gentle dolly-in
-    setTimeout(() => { if ((map.getZoom() ?? 14) < desired) map.setZoom(Math.min(desired, (map.getZoom() ?? 14) + 1)); }, 220);
-    setTimeout(() => { if ((map.getZoom() ?? 14) < desired) map.setZoom(desired); }, 460);
+    setTimeout(() => { if ((map.getZoom() ?? 14) < desired) map.setZoom(desired); }, 240);
   }
 }
 
@@ -861,47 +961,26 @@ function highlightHexOnMap(h) {
   });
 }
 
-function getPaletteStops(theme) {
-  if (theme === "vivid") {
-    // High-saturation option for users who want a punchy heatmap.
-    return [
-      [0,   [239, 68, 68]],
-      [35,  [249, 115, 22]],
-      [50,  [234, 179, 8]],
-      [65,  [132, 204, 22]],
-      [80,  [34, 197, 94]],
-      [100, [21, 128, 61]],
-    ];
-  } else if (theme === "ganit") {
-    // Brand palette: orange (bad) → blue (good), distinct hues, softened.
-    return [
-      [0,   [230, 120, 90]],   // Avoid  (muted terracotta)
-      [35,  [244, 160, 100]],  // Marginal (soft orange)
-      [50,  [210, 200, 170]],  // Decent (warm neutral)
-      [65,  [120, 140, 220]],  // Strong (soft blue)
-      [80,  [60, 70, 200]],    // Excellent (brand-ish blue)
-      [100, [26, 0, 217]],     // Best (logo blue)
-    ];
-  } else if (theme === "colorblind") {
-    // Blue (bad) → yellow (good): safe for red-green colorblindness, distinct.
-    return [
-      [0,   [70, 110, 200]],
-      [35,  [120, 160, 220]],
-      [50,  [200, 200, 200]],
-      [65,  [240, 210, 120]],
-      [80,  [240, 180, 40]],
-      [100, [200, 140, 0]],
-    ];
-  } else { // default "soft" — distinct, gentle, lets the map show through
-    return [
-      [0,   [214, 96, 77]],    // Avoid (soft coral-red)
-      [35,  [233, 156, 96]],   // Marginal (soft amber)
-      [50,  [235, 214, 140]],  // Decent (pale sand)
-      [65,  [150, 200, 150]],  // Strong (soft sage green)
-      [80,  [70, 175, 110]],   // Excellent (clean green)
-      [100, [33, 140, 90]],    // Best (deep teal-green)
-    ];
-  }
+function getPaletteStops(/* theme */) {
+  // Heatmap palette is LOCKED to a single green→red scale (theme switching is
+  // intentionally disabled — see the commented alternatives below). Thresholds
+  // are shifted "harder" so red/orange covers more of the range: a 50/100 zone
+  // reads orange, not neutral, and only genuinely strong zones (70+) go green.
+  return [
+    [0,   [214, 47, 47]],    // Avoid — clear red
+    [30,  [233, 105, 60]],   // Weak — red-orange
+    [45,  [240, 160, 70]],   // Marginal — orange
+    [58,  [235, 205, 90]],   // Decent — amber/yellow
+    [70,  [150, 200, 100]],  // Fair — yellow-green
+    [82,  [70, 180, 95]],    // Strong — green
+    [100, [25, 135, 70]],    // Best — deep green
+  ];
+
+  /* --- Disabled alternative themes (kept for future re-enable) ---
+  if (theme === "vivid")   return [[0,[239,68,68]],[35,[249,115,22]],[50,[234,179,8]],[65,[132,204,22]],[80,[34,197,94]],[100,[21,128,61]]];
+  if (theme === "ganit")   return [[0,[230,120,90]],[35,[244,160,100]],[50,[210,200,170]],[65,[120,140,220]],[80,[60,70,200]],[100,[26,0,217]]];
+  if (theme === "colorblind") return [[0,[70,110,200]],[35,[120,160,220]],[50,[200,200,200]],[65,[240,210,120]],[80,[240,180,40]],[100,[200,140,0]]];
+  */
 }
 
 function scoreColor(s) {
@@ -1225,7 +1304,7 @@ function openExecModal() {
         ${ex.marketState ? `
         <div class="eb-section">
           <h4>📍 Market reality</h4>
-          <div class="bottom-line">${escapeHtml(ex.marketState)}</div>
+          <div class="bottom-line">${boldKeywords(ex.marketState)}</div>
         </div>` : ""}
 
         <div class="eb-section drivers">
@@ -1234,8 +1313,8 @@ function openExecModal() {
             <div class="driver">
               <div class="icon">✓</div>
               <div>
-                <div class="d-headline">${escapeHtml(d.headline)}</div>
-                <div class="d-detail">${escapeHtml(d.detail)}</div>
+                <div class="d-headline">${boldKeywords(d.headline)}</div>
+                <div class="d-detail">${boldKeywords(d.detail)}</div>
               </div>
             </div>`).join("") || "<em>(none identified)</em>"}
         </div>
@@ -1246,8 +1325,8 @@ function openExecModal() {
             <div class="risk">
               <div class="icon">!</div>
               <div>
-                <div class="d-headline">${escapeHtml(r.headline)}</div>
-                <div class="d-detail">${escapeHtml(r.detail)}</div>
+                <div class="d-headline">${boldKeywords(r.headline)}</div>
+                <div class="d-detail">${boldKeywords(r.detail)}</div>
               </div>
             </div>`).join("") || "<em>(none identified)</em>"}
         </div>
@@ -1263,13 +1342,13 @@ function openExecModal() {
         <div class="eb-section">
           <h4>↪ Where to expand instead</h4>
           <div class="alts-list">
-            ${ex.alternatives.map(a => `<div class="alt-item">${escapeHtml(a)}</div>`).join("")}
+            ${ex.alternatives.map(a => `<div class="alt-item">${boldKeywords(a)}</div>`).join("")}
           </div>
         </div>` : ""}
 
         <div class="eb-section">
           <h4>🎯 Bottom line</h4>
-          <div class="bottom-line">${escapeHtml(ex.bottomLine || "")}</div>
+          <ul class="bl-points">${bulletize(ex.bottomLine || "").map(b => `<li>${boldKeywords(b)}</li>`).join("") || "<li>—</li>"}</ul>
         </div>
       </div>
 
@@ -1353,9 +1432,22 @@ function setStatus(msg, kind = "") {
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
-// Escape, then turn **text** into <strong>text</strong> for safe inline bolding.
+// Escape, bold **text**, AND bold domain keywords — so the zone panel highlights
+// key terms even when the model didn't wrap them in asterisks.
+const KW_LIST = ["metro", "railway", "station", "highway", "expressway", "flyover", "bridge",
+  "port", "harbour", "airport", "warehouse", "industrial", "logistics", "mall", "market",
+  "school", "college", "university", "hospital", "residential", "apartment", "office",
+  "commercial", "footfall", "competition", "competitors", "saturated", "underserved",
+  "affluent", "population", "demand", "access", "growth", "parking", "rupees", "sqft"];
 function mdBold(s) {
-  return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  let out = escapeHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  KW_LIST.forEach(k => {
+    // skip if already inside a <strong> we just made — simple heuristic: bold standalone occurrences
+    out = out.replace(new RegExp(`\\b(${k}[a-z]*)\\b`, "gi"), m => `<strong>${m}</strong>`);
+  });
+  // collapse accidental nested <strong><strong>
+  out = out.replace(/<strong><strong>/g, "<strong>").replace(/<\/strong><\/strong>/g, "</strong>");
+  return out;
 }
 // Build a Google Maps listing URL for any place on the map. Prefer the Places
 // ID (lands on the exact listing); fall back to name + coordinates.
