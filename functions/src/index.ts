@@ -430,9 +430,21 @@ function applyHonesty(
     if (!/avoid|elsewhere|other/i.test(ex.bottomLine || "")) {
       ex.bottomLine = `This area is a weak bet (best zone only ${bestFinal}/100). ${ex.alternatives?.length ? "Consider the alternatives below instead." : "Look at adjacent micro-markets before committing."}`;
     }
+    if (ex.bottomLine) {
+      ex.bottomLine = ex.bottomLine
+        .replace(/\bcompelling ['"]?GO['"]? opportunity/gi, "'AVOID' (Not Recommended) opportunity due to weak local metrics")
+        .replace(/\b['"]?GO['"]? opportunity/gi, "'AVOID' (Not Recommended) opportunity")
+        .replace(/\b['"]?GO['"]?\b/g, "'AVOID'");
+    }
   } else if (saturated && ex.recommendation === "GO") {
     ex.recommendation = "CAUTION";
     ex.rating = Math.min(ex.rating ?? 3, 3);
+    if (ex.bottomLine) {
+      ex.bottomLine = ex.bottomLine
+        .replace(/\bcompelling ['"]?GO['"]? opportunity/gi, "'CAUTION' (Proceed with Caution) opportunity due to high competitor saturation")
+        .replace(/\b['"]?GO['"]? opportunity/gi, "'CAUTION' (Proceed with Caution) opportunity")
+        .replace(/\b['"]?GO['"]?\b/g, "'CAUTION'");
+    }
   }
 }
 
