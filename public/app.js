@@ -8,6 +8,8 @@ let RUN = isLocal ? DEPLOYED_RUN : "/api";
 let map = null;
 let hexPolygons = [];
 let markers = [];
+let importedMarkers = [];
+let importedLocationsData = [];
 let lastResult = null;
 let mapsBrowserKey = "";
 let currentTheme = localStorage.getItem("scoutTheme") || "soft";
@@ -702,6 +704,42 @@ function addCompetitorPin(p, color, label, kind = "competitor") {
   // Label using OverlayView so we can style it as HTML
   const label2 = makeHTMLLabel({ lat: p.lat, lng: p.lng }, p.name, kind === "own" ? "marker-label own" : "marker-label competitor");
   markers.push(label2);
+}
+
+function addImportedPin(p, color, label) {
+  const m = new google.maps.Marker({
+    position: { lat: p.lat, lng: p.lng }, map,
+    title: `Imported: ${p.name}`,
+    optimized: true,
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 7, fillColor: color, fillOpacity: 1,
+      strokeWeight: 2, strokeColor: "#fff",
+    },
+  });
+  m.poiName = p.name;
+  m.addListener("click", () => {
+    const content = `
+      <div style="font-family: 'Inter', sans-serif; padding: 6px; min-width: 150px;">
+        <div style="font-size: 11px; font-weight: 700; color: ${color}; text-transform: uppercase; margin-bottom: 2px;">
+          🟢 Imported Location
+        </div>
+        <div style="font-size: 13px; font-weight: 600; color: var(--text);">${escapeHtml(p.name)}</div>
+        <div style="font-size: 10px; color: var(--muted); margin-top: 4px; font-family: monospace;">
+          ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}
+        </div>
+        <a class="gmaps-link" href="${gmapsUrl(p)}" target="_blank" rel="noopener">View on Google Maps ↗</a>
+      </div>
+    `;
+    infoWindow.setContent(content);
+    infoWindow.open(map, m);
+  });
+  importedMarkers.push(m);
+
+  // Label using OverlayView so we can style it as HTML
+  const label2 = makeHTMLLabel({ lat: p.lat, lng: p.lng }, p.name, "marker-label own", /*deferred*/ true);
+  label2.setMap(map);
+  importedMarkers.push(label2);
 }
 
 // Create an overlay pin + label but DON'T attach to the map yet. The layer
@@ -1468,6 +1506,7 @@ function buildMapSnapshotUrl(data = lastResult) {
   (data.ownList || []).slice(0, 12).forEach(p => params.append("markers", `color:green|label:Y|${p.lat},${p.lng}`));
   (data.competitorsList || []).slice(0, 12).forEach(p => params.append("markers", `color:red|label:C|${p.lat},${p.lng}`));
   (data.recommendations || []).forEach((r, idx) => params.append("markers", `color:blue|label:${idx + 1}|${r.lat},${r.lng}`));
+  importedLocationsData.slice(0, 12).forEach(p => params.append("markers", `color:green|label:I|${p.lat},${p.lng}`));
   return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
 }
 
@@ -1588,9 +1627,14 @@ async function onImportFile(e) {
   // Plot locations on the map
   const validLocs = (data.locations || []).filter(l => l.lat != null && l.lng != null);
   if (validLocs.length > 0) {
+    // Clear previous imported markers
+    for (const m of importedMarkers) m.setMap(null);
+    importedMarkers = [];
+    importedLocationsData = validLocs;
+
     const bounds = new google.maps.LatLngBounds();
     validLocs.forEach(p => {
-      addCompetitorPin(p, "#22c55e", p.name, "own");
+      addImportedPin(p, "#22c55e", p.name);
       bounds.extend({ lat: p.lat, lng: p.lng });
     });
     if (map) {
