@@ -332,7 +332,7 @@ const PROGRESS_ITEMS = [
   "Checking property prices & listings",
   "Researching growth signals on the web",
   "Weighing demand, competition & access",
-  "Scoring every zone for suitability",
+  "Scoring every area for suitability",
 ];
 let _tickTimer = null, _tickIdx = 0;
 
