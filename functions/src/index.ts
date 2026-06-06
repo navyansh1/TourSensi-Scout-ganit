@@ -322,19 +322,41 @@ router.post("/import", async (req, res) => {
     const mapping = await suggestColumnMapping(parsed.headers, parsed.rows);
     const mapped = applyMapping(parsed.rows, mapping as any);
 
-    // Geocode missing lat/lng coordinates if address is present
-    const needsGeocoding = mapped.filter(loc => (loc.lat == null || loc.lng == null) && loc.address);
+    // Geocode missing lat/lng coordinates by building a full address from all location components
+    const needsGeocoding = mapped.filter(loc => loc.lat == null || loc.lng == null);
     // Limit to first 50 to avoid API rate limits/timeouts
     const toGeocode = needsGeocoding.slice(0, 50);
+
+    const excludedCols = new Set<string>();
+    if (mapping.name) excludedCols.add(mapping.name);
+    if (mapping.branchId) excludedCols.add(mapping.branchId);
+    if (mapping.type) excludedCols.add(mapping.type);
+    if (mapping.lat) excludedCols.add(mapping.lat);
+    if (mapping.lng) excludedCols.add(mapping.lng);
+
     const geocodePromises = toGeocode.map(async (loc) => {
+      const addressParts: string[] = [];
+      if (mapping.address && loc.raw[mapping.address]) {
+        addressParts.push(String(loc.raw[mapping.address]));
+      }
+      for (const key of Object.keys(loc.raw)) {
+        if (key !== mapping.address && !excludedCols.has(key) && loc.raw[key] != null) {
+          const val = String(loc.raw[key]).trim();
+          if (val && !addressParts.includes(val)) {
+            addressParts.push(val);
+          }
+        }
+      }
+      const fullAddress = addressParts.length > 0 ? addressParts.join(", ") : `${loc.name}, Chennai, India`;
       try {
-        const geo = await geocodeIndia(loc.address!);
+        const geo = await geocodeIndia(fullAddress);
         if (geo) {
           loc.lat = geo.lat;
           loc.lng = geo.lng;
+          loc.address = geo.formattedAddress;
         }
       } catch (err) {
-        console.error("Geocoding failed for imported location:", loc.address, err);
+        console.error("Geocoding failed for imported location:", fullAddress, err);
       }
     });
     await Promise.all(geocodePromises);
