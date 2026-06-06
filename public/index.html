@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>TourSensi Scout — AI Site Selection for India</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo-img" src="/img/ganit-logo.png" alt="Ganit — Data Speaks" />
+      <div>
+        <div class="brand-name">TourSensi <span class="accent">Scout</span></div>
+        <div class="brand-tag">AI-powered site selection for BFSI &amp; FMCG</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <button id="execBtn" class="primary ghost-primary hidden">📋 View Executive Summary</button>
+      <button id="importBtn" class="ghost">📂 Import my locations</button>
+      <button id="infoBtn" class="ghost icon-btn" title="About this tool & data sources" aria-label="About">ℹ️</button>
+      <button id="settingsBtn" class="ghost icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+    </div>
+
+    <!-- Settings popover -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <div class="settings-title">Settings</div>
+      <label class="settings-label" for="themeSelect">Heatmap color scheme</label>
+      <select id="themeSelect" class="settings-select">
+        <option value="soft">Soft — gentle, map stays visible (default)</option>
+        <option value="vivid">Vivid — punchy green → red</option>
+        <option value="ganit">Ganit brand — orange → blue</option>
+        <option value="colorblind">Colorblind-safe — blue → yellow</option>
+      </select>
+      <div class="settings-hint">Good zones and weak zones use distinct hues. Lower opacity keeps the underlying map readable.</div>
+    </div>
+  </header>
+
+  <main>
+    <aside class="sidebar">
+      <div class="form-group">
+        <label>Industry</label>
+        <select id="vertical">
+          <option value="BFSI_ATM">BFSI — ATM placement</option>
+          <option value="BFSI_BRANCH">BFSI — New branch</option>
+          <option value="FMCG_RETAIL">FMCG — Retail store</option>
+          <option value="FMCG_WAREHOUSE">FMCG — Warehouse / dark store</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Who are you?</label>
+        <select id="company"><option value="">(none — show competitors only)</option></select>
+      </div>
+
+      <div class="form-group">
+        <label>Location in India</label>
+        <input id="location" type="text" placeholder="e.g. Whitefield, Bangalore" />
+      </div>
+
+      <button id="analyzeBtn" class="primary">⚡ Analyze location</button>
+
+      <div id="status" class="status"></div>
+      <div id="progressPanel" class="progress-panel hidden"></div>
+
+      <section id="summary" class="hidden">
+        <!-- Mini exec card (sidebar version) -->
+        <div id="execMini" class="exec-mini"></div>
+
+        <h3>Top recommended sites</h3>
+        <ol id="recList" class="rec-list"></ol>
+
+        <h3 style="margin-top:20px">Area context</h3>
+        <div id="contextPanel" class="growth"></div>
+
+        <h3 style="margin-top:20px">AI search trail</h3>
+        <button id="trailToggle" class="ghost mini">Show 8 grounded searches ▾</button>
+        <div id="trail" class="trail hidden"></div>
+      </section>
+    </aside>
+
+    <!-- Draggable divider between sidebar and map -->
+    <div id="sidebarResizer" class="sidebar-resizer" title="Drag to resize the panel">
+      <div class="resizer-grip"><span></span><span></span><span></span></div>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- Floating legend with overlay icon explanations -->
+    <div id="legend" class="legend hidden">
+      <div class="legend-title">Heatmap (suitability)</div>
+      <div class="legend-row"><div class="swatch" id="swatch-excellent" style="background:#16a34a"></div>Excellent (80+)</div>
+      <div class="legend-row"><div class="swatch" id="swatch-strong" style="background:#65a30d"></div>Strong (65–79)</div>
+      <div class="legend-row"><div class="swatch" id="swatch-decent" style="background:#facc15"></div>Decent (50–64)</div>
+      <div class="legend-row"><div class="swatch" id="swatch-marginal" style="background:#f48020"></div>Marginal (35–49)</div>
+      <div class="legend-row"><div class="swatch" id="swatch-avoid" style="background:#dc2626"></div>Avoid (&lt;35)</div>
+      <hr/>
+      <div class="legend-title">Map pins</div>
+      <div class="legend-row dot"><div class="swatch" style="background:#22c55e"></div>Your existing site</div>
+      <div class="legend-row dot"><div class="swatch" style="background:#dc2626"></div>Competitor</div>
+      <div class="legend-row dot"><div class="swatch" style="background:#1a2b8c"></div>Property for sale</div>
+      <hr/>
+      <div class="legend-title">Context overlays</div>
+      <div class="legend-row">🚇 Metro / station</div>
+      <div class="legend-row">🏬 Mall</div>
+      <div class="legend-row">🏫 School / 🎓 university</div>
+      <div class="legend-row">🏥 Hospital</div>
+    </div>
+
+    <!-- Hex detail panel -->
+    <div id="hexPanel" class="hex-panel hidden">
+      <button class="close" id="hexClose">×</button>
+      <h3>Site detail</h3>
+      <div id="hexBody"></div>
+    </div>
+  </main>
+
+  <!-- Full executive summary modal -->
+  <div id="execModal" class="modal hidden">
+    <div class="modal-body exec-modal">
+      <button class="close" id="execClose">×</button>
+      <div id="execContent"></div>
+    </div>
+  </div>
+
+  <!-- Info / About modal -->
+  <div id="infoModal" class="modal hidden">
+    <div class="modal-body info-modal">
+      <button class="close" id="infoClose">×</button>
+      <h2>About TourSensi Scout</h2>
+      <p class="info-lede">AI-powered site selection for BFSI &amp; FMCG in India. We fuse live Google Maps data, multi-source web signals and Gemini grounding agents into one decision in ~30 seconds.</p>
+
+      <h3 class="info-h">What makes it strong</h3>
+      <ul class="info-list">
+        <li><strong>Use-case aware:</strong> an ATM, a bank branch, a grocery store and a warehouse are scored on different things — footfall vs affluence vs logistics access.</li>
+        <li><strong>Zone-level reasoning:</strong> click any zone for a fact-backed AI verdict — why to open there, or why not.</li>
+        <li><strong>Grounded, not guessed:</strong> growth claims are backed by live Google Search citations you can open.</li>
+        <li><strong>Granular heatmap:</strong> every ~460 m hex scored on demand, competition, access &amp; future growth.</li>
+      </ul>
+
+      <h3 class="info-h">Where the data comes from</h3>
+      <div class="info-sources">
+        <div class="src-row"><span class="src-dot" style="background:#1a00d9"></span><div><strong>Google Maps Platform</strong> — Geocoding, Places (New): competitors, your sites, and nearby context (metro, malls, schools, highways, ports). Prices, ratings &amp; business status where available.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#fe6e06"></span><div><strong>Google Search via Gemini 2.5</strong> — grounded research on metro projects, real-estate launches, SEZs, infrastructure &amp; recent news, with citations.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#16a34a"></span><div><strong>99acres (via Apify)</strong> — live property listings &amp; ₹/sqft as a local affluence and supply signal.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#6b7390"></span><div><strong>Wikipedia &amp; India Post</strong> — area context paragraph, PIN code &amp; district.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#0ea5e9"></span><div><strong>OpenStreetMap</strong> — background POI density as a demand backdrop.</div></div>
+      </div>
+      <p class="info-foot">Built for the Ganit Inc. ideathon · <em>Data Speaks</em>.</p>
+    </div>
+  </div>
+
+  <!-- Import modal -->
+  <div id="importModal" class="modal hidden">
+    <div class="modal-body">
+      <button class="close" id="importClose">×</button>
+      <h2>Import your existing locations</h2>
+      <p>Upload a CSV, Excel, or JSON file. AI will auto-map your columns onto our schema.</p>
+      <input type="file" id="importFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.json" />
+      <div id="importStatus" class="status"></div>
+      <pre id="importResult" class="import-result hidden"></pre>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

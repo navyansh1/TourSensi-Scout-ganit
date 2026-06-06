@@ -1,0 +1,88 @@
+// Geocoding via Google. Used to turn "Anna Nagar, Chennai" into lat/lng + bbox.
+
+import axios from "axios";
+
+export interface GeocodeResult {
+  formattedAddress: string;
+  lat: number;
+  lng: number;
+  bbox: { south: number; west: number; north: number; east: number };
+  area: string;
+  city: string;
+  pin?: string;
+}
+
+export async function geocodeIndia(query: string): Promise<GeocodeResult | null> {
+  const key = process.env.GOOGLE_MAPS_SERVER_KEY;
+  if (!key) throw new Error("GOOGLE_MAPS_SERVER_KEY not set");
+
+  const url = "https://maps.googleapis.com/maps/api/geocode/json";
+  const resp = await axios.get(url, {
+    params: { address: query, region: "in", components: "country:IN", key },
+    timeout: 10_000,
+  });
+
+  const r = resp.data?.results?.[0];
+  if (!r) return null;
+
+  const loc = r.geometry.location;
+
+  // Google's viewport varies wildly by place type (a whole sublocality can return
+  // a 10km+ box). For a granular, neighborhood-level analysis we clamp the box to
+  // a fixed ~2.5km half-width around the center. This keeps the heatmap zoomed in
+  // and the hex count manageable instead of blanketing a huge area.
+  const HALF_KM = 2.5;
+  const dLat = HALF_KM / 111; // ~111 km per degree latitude
+  const dLng = HALF_KM / (111 * Math.cos((loc.lat * Math.PI) / 180));
+  const vp = {
+    northeast: { lat: loc.lat + dLat, lng: loc.lng + dLng },
+    southwest: { lat: loc.lat - dLat, lng: loc.lng - dLng },
+  };
+
+  let area = "";
+  let city = "";
+  let pin: string | undefined;
+  for (const c of r.address_components ?? []) {
+    if (c.types?.includes("sublocality_level_1") || c.types?.includes("sublocality")) area = c.long_name;
+    if (c.types?.includes("locality")) city = c.long_name;
+    if (!area && c.types?.includes("neighborhood")) area = c.long_name;
+    if (c.types?.includes("postal_code")) pin = c.long_name;
+  }
+  if (!city) {
+    for (const c of r.address_components ?? []) {
+      if (c.types?.includes("administrative_area_level_2")) city = c.long_name;
+    }
+  }
+  if (!area) area = city;
+
+  return {
+    formattedAddress: r.formatted_address,
+    lat: loc.lat,
+    lng: loc.lng,
+    bbox: {
+      south: vp.southwest.lat,
+      west: vp.southwest.lng,
+      north: vp.northeast.lat,
+      east: vp.northeast.lng,
+    },
+    area,
+    city,
+    pin: pin ?? await reversePin(loc.lat, loc.lng, key),
+  };
+}
+
+// Reverse-geocode lat/lng to find a PIN when the area name didn't include one.
+async function reversePin(lat: number, lng: number, key: string): Promise<string | undefined> {
+  try {
+    const resp = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
+      params: { latlng: `${lat},${lng}`, key, result_type: "postal_code" },
+      timeout: 8_000,
+    });
+    for (const r of resp.data?.results ?? []) {
+      for (const c of r.address_components ?? []) {
+        if (c.types?.includes("postal_code")) return c.long_name;
+      }
+    }
+  } catch {}
+  return undefined;
+}

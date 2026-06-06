@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read of cached scores so the map loads fast
+    match /hex_scores/{doc}    { allow read: if true; allow write: if false; }
+    match /poi_cache/{doc}     { allow read: if true; allow write: if false; }
+    match /realestate/{doc}    { allow read: if true; allow write: if false; }
+
+    // Per-user data
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
