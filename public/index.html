@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unicons.iconscout.com/release/v4.0.8/css/line.css" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
 </head>
@@ -25,14 +26,14 @@
       <div class="mc-group" id="mapTypeGroup" role="group" aria-label="Map view">
         <button class="mc-btn active" data-maptype="roadmap" title="Map view">Map</button>
         <button class="mc-btn" data-maptype="satellite" title="Satellite view">Satellite</button>
-        <button class="mc-btn" data-maptype="terrain" title="Terrain view">Terrain</button>
+        <button class="mc-btn" data-maptype="terrain" title="Relief map view">Relief</button>
       </div>
-      <button class="mc-btn mc-toggle" id="labelsToggle" title="Toggle place labels">🏷️ Labels</button>
+      <button class="mc-btn mc-toggle" id="labelsToggle" title="Toggle place labels"><i class="uil uil-label"></i>Labels</button>
 
       <!-- Choose which nearby layers to show on the map (default: none — only
            your sites + competitors are shown). -->
       <div class="mc-layers" id="layersControl">
-        <button class="mc-btn mc-layers-btn" id="layersBtn" title="Choose what to show on the map">🗺️ Show on map ▾</button>
+        <button class="mc-btn mc-layers-btn" id="layersBtn" title="Choose what to show on the map"><i class="uil uil-map"></i>Show on map ▾</button>
         <div class="layers-menu hidden" id="layersMenu"></div>
       </div>
 
@@ -43,13 +44,18 @@
     </div>
 
     <div class="header-right">
-      <button id="execBtn" class="primary ghost-primary hidden">📋 View Executive Summary</button>
-      <button id="importBtn" class="ghost">📂 Import my locations</button>
-      <button id="infoBtn" class="ghost icon-btn" title="About this tool & data sources" aria-label="About">ℹ️</button>
+      <!-- Top-bar executive summary button kept for future restore.
+      <button id="execBtn" class="primary ghost-primary hidden"><i class="uil uil-file-alt"></i>View Executive Summary</button>
+      -->
+      <button id="importBtn" class="ghost"><i class="uil uil-folder-open"></i>Import my locations</button>
+      <button id="infoBtn" class="ghost icon-btn" title="About this tool & data sources" aria-label="About"><i class="uil uil-info-circle"></i></button>
+      <!-- Settings button removed from the top bar per request. Kept for future restore.
       <button id="settingsBtn" class="ghost icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+      -->
     </div>
 
     <!-- Settings popover -->
+    <!-- Settings popover kept for future restore.
     <div id="settingsPanel" class="settings-panel hidden">
       <div class="settings-title">Settings</div>
       <label class="settings-label" for="themeSelect">Heatmap color scheme</label>
@@ -61,6 +67,7 @@
       </select>
       <div class="settings-hint">Good zones and weak zones use distinct hues. Lower opacity keeps the underlying map readable.</div>
     </div>
+    -->
   </header>
 
   <main>
@@ -85,7 +92,7 @@
         <input id="location" type="text" placeholder="e.g. Whitefield, Bangalore" />
       </div>
 
-      <button id="analyzeBtn" class="primary">⚡ Analyze location</button>
+      <button id="analyzeBtn" class="primary"><i class="uil uil-bolt-alt"></i>Analyze location</button>
 
       <div id="status" class="status"></div>
       <div id="progressPanel" class="progress-panel hidden"></div>

@@ -30,6 +30,10 @@ In ~30 seconds you get:
 
 ## What's new (latest iteration)
 
+- **UI/export polish** — the top-bar map mode now says **Relief** instead of Terrain, the Labels toggle hides on Relief view, the visible Settings control is removed, and action icons use **Unicons** instead of emoji-style UI icons across the top bar and sidebar.
+- **Executive summary exports** — the full executive summary modal now includes **Save as PDF** and **Save as Word** actions, with a Google Static Maps snapshot that includes heatmap polygons and key site/competitor markers.
+- **Cleaner recommendation language** — visible recommendation badges now say **Highly Recommended / Proceed with Caution / Not Recommended** instead of exposing internal `GO / CAUTION / AVOID` codes.
+- **Brand/header and panel refinement** — the `TourSensi Scout` wordmark is lighter and aligned more closely to the Ganit logo, sidebar summary cards vertically center their stat text, and the hex-panel nearby list keeps distance values in a fixed right column so entries like `665 m` do not wrap awkwardly.
 - **Per-zone AI verdict** — click any hex → an on-demand, Google-grounded **OPEN / CONSIDER / AVOID** call with short, use-case-specific bullets (bold keywords), the supporting facts, and citations. Cached per zone (`zoneInsight.ts`, `/zone-insight`).
 - **Real population (WorldPop)** — free, current, 100 m-grid India population is now the primary demand signal, replacing the POI-density-only proxy (`worldpop.ts`).
 - **Honest, non-cheerleader summary** — the exec card states the market reality (competitor/own-site counts), is forced to **AVOID** when the whole area is weak and **CAUTION** when saturated, and suggests **alternative localities** to expand into instead (`applyHonesty` in `index.ts`).
@@ -40,7 +44,7 @@ In ~30 seconds you get:
 - **Ranked recommendations + regions to avoid** — top sites are listed **#1–#5** (clearer than the old tag labels), each chip reads "Score N/100". A separate **"⛔ Regions to avoid"** section surfaces the 3 worst, spread-out zones with a one-line reason.
 - **Accurate own-brand matching** — a returned place is only tagged as *yours* if its **name** contains a distinctive brand token (generic words like "supermarket"/"bank" are ignored), so e.g. "More" no longer matches "Grace Supermarket".
 - **Heatmap** — locked to a single **green → red** scale (theme switching disabled/commented), with thresholds tuned so weak zones clearly read red/orange. Fill opacity scales with score; map stays readable underneath.
-- **UX** — **logo-matched brand colors** (electric indigo `#1a00d9` + orange `#fe6e06`), wordmark in **Poppins** to match the Ganit logo, draggable sidebar, centered top-bar map controls (Map/Satellite/Terrain/Labels/zoom — native on-map controls hidden so the zone panel never covers them; zoom top-center), **bolded keywords** across the exec card / full summary / zone panel, bottom-line shown as bullet points, **ℹ️ About** modal listing every data source, steadily-paced progress checklist, gentle zone-to-zone glide, soft "be more specific" search nudge. Wikipedia fetch disabled (kept commented).
+- **UX** — **logo-matched brand colors** (electric indigo `#1a00d9` + orange `#fe6e06`), lighter Poppins wordmark matched to the Ganit logo, draggable sidebar, centered top-bar map controls (Map/Satellite/Relief/Labels/zoom — native on-map controls hidden so the zone panel never covers them; zoom top-center), **bolded keywords** across the exec card / full summary / zone panel, bottom-line shown as bullet points, **About** modal listing every data source, steadily-paced progress checklist, gentle zone-to-zone glide, soft "be more specific" search nudge. Wikipedia fetch disabled (kept commented).
 
 ---
 

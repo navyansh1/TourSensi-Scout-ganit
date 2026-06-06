@@ -36,7 +36,7 @@ html, body { margin: 0; padding: 0; height: 100%; background: var(--bg-2); color
 .brand > div { display: flex; flex-direction: column; justify-content: center; height: 40px; }
 /* Match the rounded geometric wordmark of the Ganit "data speaks" logo —
    same size, lighter weight so the strokes read thinner like the logo. */
-.brand-name { font-family: "Poppins", "Inter", sans-serif; font-weight: 600; font-size: 20px; letter-spacing: -0.3px; color: var(--ganit-blue); line-height: 1.1; }
+.brand-name { font-family: "Poppins", "Inter", sans-serif; font-weight: 500; font-size: 20px; letter-spacing: -0.3px; color: var(--ganit-blue); line-height: 1.1; position: relative; top: 3px; }
 .brand-name .accent { color: var(--ganit-orange); }
 .brand-tag { color: var(--muted); font-size: 11px; margin-top: 3px; font-weight: 400; }
 
@@ -119,6 +119,12 @@ select:focus, input[type=text]:focus { border-color: var(--ganit-blue); }
 button { font: inherit; cursor: pointer; border-radius: 8px; padding: 10px 14px;
   border: 1px solid var(--border); background: #fff; color: var(--text); transition: all 0.15s; }
 button:hover { background: var(--bg-2); }
+button .uil,
+.rs-head .uil,
+.progress-title .uil {
+  margin-right: 6px; font-size: 1.08em; line-height: 1; vertical-align: -1px;
+}
+.icon-btn .uil { margin-right: 0; font-size: 17px; }
 .primary {
   background: linear-gradient(135deg, var(--ganit-blue), var(--ganit-blue-2));
   border: none; color: #fff; font-weight: 600; width: 100%; padding: 12px; font-size: 14px;
@@ -408,9 +414,13 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 /* "+N more" chip + inline maps link in nearby lists */
 .more-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px;
   border-radius: 999px; background: var(--panel-2); color: var(--ganit-blue); cursor: help; }
-.nearby-row .label { display: flex; flex-direction: column; gap: 1px; }
-.nearby-name { font-weight: 400; }
-.gmaps-inline { font-size: 11px; color: var(--ganit-blue); text-decoration: none; }
+.nearby-row { align-items: flex-start; gap: 12px; }
+.nearby-row .label { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.nearby-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.nearby-title .more-chip { margin-left: 4px; }
+.nearby-name { font-weight: 400; min-width: 0; }
+.nearby-row .v { min-width: 58px; flex-shrink: 0; text-align: right; white-space: nowrap; }
+.gmaps-inline { font-size: 11px; color: var(--ganit-blue); text-decoration: none; overflow-wrap: anywhere; }
 .gmaps-inline:hover { text-decoration: underline; color: var(--ganit-orange); }
 .close { position: absolute; right: 8px; top: 6px; background: transparent; border: none;
   color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
@@ -459,7 +469,10 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .rs-head { font-size: 13px; color: var(--text-2); margin-bottom: 12px; }
 .rs-head strong { color: var(--ganit-blue); }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.stat { text-align: center; background: var(--bg-2); border-radius: 10px; padding: 10px 4px; }
+.stat {
+  text-align: center; background: var(--bg-2); border-radius: 10px; padding: 10px 4px;
+  min-height: 70px; display: flex; flex-direction: column; justify-content: center;
+}
 .stat-value { font-size: 22px; font-weight: 800; line-height: 1; letter-spacing: -0.5px; }
 .stat-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
   font-weight: 700; margin-top: 5px; }
@@ -486,6 +499,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .exec-mini .em-rec {
   font-weight: 800; font-size: 13px; padding: 4px 10px; border-radius: 6px;
   letter-spacing: 0.5px;
+  text-align: center;
 }
 .exec-mini .em-rec.GO     { background: #16a34a; color: #fff; }
 .exec-mini .em-rec.CAUTION { background: #f48020; color: #fff; }
@@ -493,11 +507,11 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .exec-mini .em-stars { color: var(--ganit-orange-2); font-size: 16px; letter-spacing: 2px; margin-bottom: 6px; }
 .exec-mini .em-bottom { font-size: 13px; line-height: 1.5; color: #e3e8ff; margin-top: 8px; }
 .exec-mini .em-cta {
-  margin-top: 12px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+  margin-top: 12px; background: var(--good); border: 1px solid #22c55e;
   color: #fff; font-weight: 600; padding: 8px 12px; border-radius: 6px; cursor: pointer;
-  font-size: 12px; width: 100%;
+  font-size: 12px; width: 100%; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
 }
-.exec-mini .em-cta:hover { background: rgba(255,255,255,0.25); }
+.exec-mini .em-cta:hover { background: #15803d; border-color: #15803d; }
 
 /* ===== FULL EXECUTIVE MODAL ===== */
 .exec-modal { width: 760px !important; padding: 0 !important; max-height: 88vh; overflow: hidden;
@@ -518,6 +532,17 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .exec-head .eh-rec.AVOID   { background: #dc2626; }
 
 .exec-body { padding: 24px 32px; overflow-y: auto; }
+.exec-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 14px;
+  position: sticky; top: -24px; background: #ffffff; z-index: 120;
+  padding: 0 0 10px; border-bottom: 1px solid var(--border);
+}
+.exec-actions .primary,
+.exec-actions .ghost {
+  width: auto; padding: 8px 12px; font-weight: 700;
+}
+.exec-actions .ghost { border: 1px solid var(--border); color: var(--text-2); background: #fff; }
+.exec-actions .ghost:hover { border-color: var(--ganit-blue); color: var(--ganit-blue); }
 .exec-body .eb-section { margin-bottom: 22px; }
 .exec-body h4 {
   text-transform: uppercase; font-size: 11px; letter-spacing: 1px;
@@ -708,4 +733,3 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .src-row strong { color: var(--text); }
 .src-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
 .info-foot { margin-top: 20px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; }
-

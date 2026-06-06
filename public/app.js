@@ -9,6 +9,7 @@ let map = null;
 let hexPolygons = [];
 let markers = [];
 let lastResult = null;
+let mapsBrowserKey = "";
 let currentTheme = localStorage.getItem("scoutTheme") || "soft";
 let selectedPolyHighlight = null;
 let infoWindow = null;
@@ -25,6 +26,7 @@ const TAG_LABELS = {
 (async function init() {
   const cfg = await fetch(`${API}/config`).then(r => r.json()).catch(() => ({}));
   const key = cfg.mapsBrowserKey;
+  mapsBrowserKey = key || "";
   if (cfg.runUrl) RUN = cfg.runUrl;
   if (!key) return setStatus("⚠ Google Maps key not configured.", "error");
   await loadGoogleMaps(key);
@@ -96,6 +98,7 @@ function initMapControls() {
       document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       map.setMapTypeId(btn.dataset.maptype);
+      updateLabelsControlVisibility();
       applyMapStyle();
     };
   });
@@ -109,9 +112,16 @@ function initMapControls() {
       applyMapStyle();
     };
   }
+  updateLabelsControlVisibility();
   // Zoom
   document.getElementById("zoomInBtn").onclick = () => map.setZoom((map.getZoom() ?? 12) + 1);
   document.getElementById("zoomOutBtn").onclick = () => map.setZoom((map.getZoom() ?? 12) - 1);
+}
+
+function updateLabelsControlVisibility() {
+  const labelsBtn = document.getElementById("labelsToggle");
+  if (!labelsBtn || !map) return;
+  labelsBtn.classList.toggle("hidden", map.getMapTypeId() === "terrain");
 }
 
 // Draggable divider between the sidebar and the map.
@@ -190,7 +200,8 @@ function bindUI() {
   document.getElementById("importBtn").onclick = () => document.getElementById("importModal").classList.remove("hidden");
   document.getElementById("importClose").onclick = () => document.getElementById("importModal").classList.add("hidden");
   document.getElementById("importFile").onchange = onImportFile;
-  document.getElementById("execBtn").onclick = openExecModal;
+  const execBtn = document.getElementById("execBtn");
+  if (execBtn) execBtn.onclick = openExecModal;
   document.getElementById("execClose").onclick = () => document.getElementById("execModal").classList.add("hidden");
   document.getElementById("infoBtn").onclick = () => document.getElementById("infoModal").classList.remove("hidden");
   document.getElementById("infoClose").onclick = () => document.getElementById("infoModal").classList.add("hidden");
@@ -245,7 +256,7 @@ async function onAnalyze() {
   clearMap();
   document.getElementById("summary").classList.add("hidden");
   document.getElementById("legend").classList.add("hidden");
-  document.getElementById("execBtn").classList.add("hidden");
+  document.getElementById("execBtn")?.classList.add("hidden");
   startProgress();
 
   try {
@@ -315,7 +326,7 @@ function startProgress() {
   panel.classList.remove("hidden");
   _tickIdx = 0;
   panel.innerHTML = `
-    <div class="progress-title">⏳ Analyzing location</div>
+    <div class="progress-title"><i class="uil uil-hourglass"></i>Analyzing location</div>
     <ul class="progress-list">
       ${PROGRESS_ITEMS.map((label, i) => `
         <li id="pi-${i}" class="${i === 0 ? "running" : "pending"}">
@@ -409,7 +420,7 @@ function renderResult(data) {
 
   // Exec mini card in sidebar
   document.getElementById("execMini").innerHTML = renderExecMini(data);
-  document.getElementById("execBtn").classList.remove("hidden");
+  document.getElementById("execBtn")?.classList.remove("hidden");
   document.querySelector(".em-cta")?.addEventListener("click", openExecModal);
 
   // Helper for quadrant name
@@ -510,7 +521,7 @@ function renderResultStats(data) {
       <div class="stat-label">${label}</div>
     </div>`;
   return `
-    <div class="rs-head">📊 Analysis ready for <strong>${escapeHtml(area)}</strong></div>
+    <div class="rs-head"><i class="uil uil-chart-bar"></i>Analysis ready for <strong>${escapeHtml(area)}</strong></div>
     <div class="stat-grid">
       ${stat(c.competitors ?? 0, "Competitors", "#dc2626")}
       ${stat(c.ownBrand ?? 0, "Your sites", "#16a34a")}
@@ -559,7 +570,7 @@ function renderExecMini(data) {
   return `
     <div class="em-row">
       <div class="em-area">${escapeHtml(data.geo.area || data.geo.city)}</div>
-      <div class="em-rec ${ex.recommendation}">${ex.recommendation}</div>
+      <div class="em-rec ${ex.recommendation}">${recommendationLabel(ex.recommendation)}</div>
     </div>
     <div class="em-stars">${stars}</div>
     ${ex.marketState ? `<div class="em-market">📍 ${boldKeywords(ex.marketState)}</div>` : ""}
@@ -569,8 +580,14 @@ function renderExecMini(data) {
         <div class="em-alts-label">Consider instead</div>
         ${ex.alternatives.map(a => `<div class="em-alt">↪ ${boldKeywords(a)}</div>`).join("")}
       </div>` : ""}
-    <button class="em-cta">📋 Open full executive summary →</button>
+    <button class="em-cta"><i class="uil uil-file-alt"></i>Open full executive summary →</button>
   `;
+}
+
+function recommendationLabel(rec) {
+  if (rec === "GO") return "Highly Recommended";
+  if (rec === "AVOID") return "Not Recommended";
+  return "Proceed with Caution";
 }
 
 // Split a short prose blurb into clean sentence bullets.
@@ -818,7 +835,10 @@ function showHexPanel(h, data) {
       const link = `<a class="gmaps-inline" href="${gmapsUrl({ name: n.name, id: n.id })}" target="_blank" rel="noopener" title="Open ${escapeHtml(n.name)} on Google Maps">${escapeHtml(n.name)} ↗</a>`;
       return `
       <div class="score-row nearby-row">
-        <span class="label">${n.icon} ${escapeHtml(n.label.split(" / ")[0])}${moreChip}<div class="nearby-name">${link}</div></span>
+        <span class="label">
+          <span class="nearby-title">${n.icon} ${escapeHtml(n.label.split(" / ")[0])}${moreChip}</span>
+          <span class="nearby-name">${link}</span>
+        </span>
         <span class="v">${dist(n.meters)}</span>
       </div>`;
     }).join("")}
@@ -1140,13 +1160,13 @@ function renderExpandedDetails(r, data) {
 
 function renderHexAssessment(h, data) {
   let statusClass = "caution";
-  let statusText = "Proceed with Caution (CAUTION)";
+  let statusText = "Proceed with Caution";
   if (h.final >= 75) {
     statusClass = "go";
-    statusText = "Highly Recommended (GO)";
+    statusText = "Highly Recommended";
   } else if (h.final < 50) {
     statusClass = "avoid";
-    statusText = "Not Recommended (AVOID)";
+    statusText = "Not Recommended";
   }
 
   const pros = [];
@@ -1293,10 +1313,15 @@ function openExecModal() {
     </div>
     
     <div class="exec-body" style="max-height: 58vh; overflow-y: auto;">
+      <div class="exec-actions">
+        <button id="savePdfBtn" class="primary mini">Save as PDF</button>
+        <button id="saveWordBtn" class="ghost mini">Save as Word</button>
+      </div>
+
       <!-- Tab Selector Header -->
       <div style="display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 2px solid var(--border); padding-bottom: 12px; position: sticky; top: -24px; background: #ffffff; z-index: 100;">
-        <button id="execTabSummary" class="primary mini" style="width: auto; padding: 8px 16px;">📋 Summary Insights</button>
-        <button id="execTabDetails" class="ghost mini" style="width: auto; padding: 8px 16px; border: 1px solid var(--border);">🔍 Detailed Site Metrics</button>
+        <button id="execTabSummary" class="primary mini" style="width: auto; padding: 8px 16px;"><i class="uil uil-file-alt"></i>Summary Insights</button>
+        <button id="execTabDetails" class="ghost mini" style="width: auto; padding: 8px 16px; border: 1px solid var(--border);"><i class="uil uil-search"></i>Detailed Site Metrics</button>
       </div>
 
       <!-- View 1: Summary -->
@@ -1377,6 +1402,8 @@ function openExecModal() {
   const tabDet = document.getElementById("execTabDetails");
   const viewSum = document.getElementById("execSummaryView");
   const viewDet = document.getElementById("execDetailsView");
+  document.getElementById("savePdfBtn").onclick = saveExecutiveSummaryPdf;
+  document.getElementById("saveWordBtn").onclick = saveExecutiveSummaryWord;
 
   tabSum.onclick = () => {
     tabSum.className = "primary mini";
@@ -1401,6 +1428,101 @@ function openExecModal() {
   };
 
   document.getElementById("execModal").classList.remove("hidden");
+}
+
+function buildMapSnapshotUrl(data = lastResult) {
+  if (!data || !mapsBrowserKey) return "";
+  const params = new URLSearchParams({
+    key: mapsBrowserKey,
+    size: "1000x620",
+    scale: "2",
+    maptype: map?.getMapTypeId() === "satellite" ? "satellite" : "roadmap",
+  });
+  const center = `${data.geo.lat},${data.geo.lng}`;
+  params.set("center", center);
+  params.set("zoom", String(Math.min(map?.getZoom?.() || 13, 14)));
+
+  const addPath = (h) => {
+    const color = scoreColor(h.final).match(/\d+/g).map(n => Number(n).toString(16).padStart(2, "0")).join("");
+    const boundary = window.h3.cellToBoundary(h.hex, true);
+    const points = boundary.concat([boundary[0]]).map(([lng, lat]) => `${lat.toFixed(5)},${lng.toFixed(5)}`);
+    const path = `color:0x${color}cc|fillcolor:0x${color}80|weight:1|${points.join("|")}`;
+    const next = `${params.toString()}&path=${encodeURIComponent(path)}`;
+    if (next.length < 14500) params.append("path", path);
+  };
+  (data.hexes || []).forEach(addPath);
+
+  (data.ownList || []).slice(0, 12).forEach(p => params.append("markers", `color:green|label:Y|${p.lat},${p.lng}`));
+  (data.competitorsList || []).slice(0, 12).forEach(p => params.append("markers", `color:red|label:C|${p.lat},${p.lng}`));
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+}
+
+function buildExecutiveReportHtml() {
+  const data = lastResult;
+  const ex = data.agent.executive || {};
+  const stars = "★".repeat(ex.rating || 3) + "☆".repeat(5 - (ex.rating || 3));
+  const snapshot = buildMapSnapshotUrl(data);
+  const recs = data.recommendations || [];
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Executive Summary - ${escapeHtml(data.geo.area || data.geo.city)}</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #1a1d2b; margin: 32px; line-height: 1.45; }
+      h1 { color: #1a00d9; margin: 0 0 4px; }
+      h2 { color: #1a00d9; font-size: 15px; margin-top: 24px; text-transform: uppercase; }
+      .meta { color: #6b7390; margin-bottom: 18px; }
+      .rec { display: inline-block; padding: 6px 10px; border-radius: 6px; background: #16a34a; color: #fff; font-weight: bold; }
+      .snapshot { width: 100%; max-height: 520px; object-fit: cover; border: 1px solid #e1e5ee; border-radius: 8px; margin: 16px 0; }
+      .box { background: #f6f7fb; border-left: 4px solid #fe6e06; padding: 12px 14px; border-radius: 0 8px 8px 0; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+      th, td { border-bottom: 1px solid #e1e5ee; padding: 8px; text-align: left; }
+      th { color: #1a00d9; background: #f6f7fb; }
+      ul { padding-left: 20px; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(data.geo.area || data.geo.city)} Executive Summary</h1>
+    <div class="meta">${escapeHtml(data.geo.formattedAddress)} | ${escapeHtml(data.vertical.replace("_", " - "))} | ${escapeHtml(data.company?.name || "no company selected")}</div>
+    <div class="rec">${recommendationLabel(ex.recommendation || "CAUTION")}</div>
+    <div style="font-size:22px;color:#fe6e06;margin-top:8px">${stars}</div>
+    ${snapshot ? `<img class="snapshot" src="${snapshot}" alt="Map snapshot with heatmap" />` : ""}
+    ${ex.marketState ? `<h2>Market Reality</h2><div class="box">${boldKeywords(ex.marketState)}</div>` : ""}
+    <h2>Growth Drivers</h2>
+    <ul>${(ex.drivers || []).map(d => `<li><strong>${boldKeywords(d.headline)}</strong>: ${boldKeywords(d.detail)}</li>`).join("") || "<li>None identified</li>"}</ul>
+    <h2>Risks And Concerns</h2>
+    <ul>${(ex.risks || []).map(r => `<li><strong>${boldKeywords(r.headline)}</strong>: ${boldKeywords(r.detail)}</li>`).join("") || "<li>None identified</li>"}</ul>
+    <h2>Bottom Line</h2>
+    <ul>${bulletize(ex.bottomLine || "").map(b => `<li>${boldKeywords(b)}</li>`).join("") || "<li>-</li>"}</ul>
+    <h2>Recommended Sites</h2>
+    <table>
+      <thead><tr><th>Site</th><th>Score</th><th>Recommendation</th><th>Coordinates</th></tr></thead>
+      <tbody>${recs.map(r => `<tr><td>${escapeHtml(TAG_LABELS[r.tag] || r.tag)}</td><td>${r.final}/100</td><td>${recommendationLabel(r.final >= 75 ? "GO" : r.final < 50 ? "AVOID" : "CAUTION")}</td><td>${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}</td></tr>`).join("")}</tbody>
+    </table>
+  </body>
+  </html>`;
+}
+
+function saveExecutiveSummaryPdf() {
+  if (!lastResult) return;
+  const report = window.open("", "_blank");
+  if (!report) return alert("Allow pop-ups to save the executive summary as PDF.");
+  report.document.write(buildExecutiveReportHtml());
+  report.document.close();
+  setTimeout(() => report.print(), 500);
+}
+
+function saveExecutiveSummaryWord() {
+  if (!lastResult) return;
+  const blob = new Blob([buildExecutiveReportHtml()], { type: "application/msword" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(lastResult.geo.area || lastResult.geo.city || "executive-summary").replace(/[^\w-]+/g, "-").toLowerCase()}-executive-summary.doc`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ---------- import ----------
