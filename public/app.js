@@ -1245,7 +1245,7 @@ function openExecModal() {
   
   // Build Site Comparison Matrix
   const recs = lastResult.recommendations || [];
-  const comparisonRows = recs.map(r => {
+  const comparisonRows = recs.map((r, i) => {
     let recStatus = "Proceed with Caution";
     let recColor = "var(--warn)";
     if (r.final >= 75) { recStatus = "Highly Recommended"; recColor = "var(--good)"; }
@@ -1258,7 +1258,7 @@ function openExecModal() {
     return `
       <tr>
         <td style="padding: 10px; font-weight: 700; border-bottom: 1px solid var(--border); font-size: 11.5px;">
-          <span style="border-left: 3px solid ${scoreColor(r.final)}; padding-left: 6px;">${TAG_LABELS[r.tag] || r.tag}</span>
+          <span style="border-left: 3px solid ${scoreColor(r.final)}; padding-left: 6px;">Site ${i + 1}</span>
         </td>
         <td style="padding: 10px; border-bottom: 1px solid var(--border);"><span style="background: ${scoreColor(r.final)}; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">${r.final}/100</span></td>
         <td style="padding: 10px; border-bottom: 1px solid var(--border); font-weight: 500; font-size: 12px;">${escapeHtml(locDesc)}</td>
@@ -1467,6 +1467,7 @@ function buildMapSnapshotUrl(data = lastResult) {
 
   (data.ownList || []).slice(0, 12).forEach(p => params.append("markers", `color:green|label:Y|${p.lat},${p.lng}`));
   (data.competitorsList || []).slice(0, 12).forEach(p => params.append("markers", `color:red|label:C|${p.lat},${p.lng}`));
+  (data.recommendations || []).forEach((r, idx) => params.append("markers", `color:blue|label:${idx + 1}|${r.lat},${r.lng}`));
   return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
 }
 
@@ -1537,7 +1538,7 @@ function buildExecutiveReportHtml() {
     <h2>Recommended Sites</h2>
     <table>
       <thead><tr><th>Site</th><th>Score</th><th>Recommendation</th><th>Coordinates</th></tr></thead>
-      <tbody>${recs.map(r => `<tr><td>${escapeHtml(TAG_LABELS[r.tag] || r.tag)}</td><td>${r.final}/100</td><td>${recommendationLabel(r.final >= 75 ? "GO" : r.final < 50 ? "AVOID" : "CAUTION")}</td><td>${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}</td></tr>`).join("")}</tbody>
+      <tbody>${recs.map((r, i) => `<tr><td>Site ${i + 1}</td><td>${r.final}/100</td><td>${recommendationLabel(r.final >= 75 ? "GO" : r.final < 50 ? "AVOID" : "CAUTION")}</td><td>${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}</td></tr>`).join("")}</tbody>
     </table>
   </body>
   </html>`;
