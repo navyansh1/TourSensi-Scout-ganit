@@ -20,6 +20,20 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- Custom map controls that drive the Google map directly, so nothing
+           sits on the map surface where the zone panel could cover it. -->
+      <div class="map-controls" id="mapControls">
+        <div class="mc-group" id="mapTypeGroup" role="group" aria-label="Map view">
+          <button class="mc-btn active" data-maptype="roadmap" title="Map view">Map</button>
+          <button class="mc-btn" data-maptype="satellite" title="Satellite view">Satellite</button>
+          <button class="mc-btn" data-maptype="terrain" title="Terrain view">Terrain</button>
+        </div>
+        <button class="mc-btn mc-toggle" id="labelsToggle" title="Toggle place labels">🏷️ Labels</button>
+        <div class="mc-group">
+          <button class="mc-btn mc-zoom" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">−</button>
+          <button class="mc-btn mc-zoom" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">+</button>
+        </div>
+      </div>
       <button id="execBtn" class="primary ghost-primary hidden">📋 View Executive Summary</button>
       <button id="importBtn" class="ghost">📂 Import my locations</button>
       <button id="infoBtn" class="ghost icon-btn" title="About this tool & data sources" aria-label="About">ℹ️</button>
@@ -68,6 +82,9 @@
       <div id="progressPanel" class="progress-panel hidden"></div>
 
       <section id="summary" class="hidden">
+        <!-- Headline stat card -->
+        <div id="resultStats" class="result-stats"></div>
+
         <!-- Mini exec card (sidebar version) -->
         <div id="execMini" class="exec-mini"></div>
 
@@ -147,8 +164,8 @@
         <div class="src-row"><span class="src-dot" style="background:#1a00d9"></span><div><strong>Google Maps Platform</strong> — Geocoding, Places (New): competitors, your sites, and nearby context (metro, malls, schools, highways, ports). Prices, ratings &amp; business status where available.</div></div>
         <div class="src-row"><span class="src-dot" style="background:#fe6e06"></span><div><strong>Google Search via Gemini 2.5</strong> — grounded research on metro projects, real-estate launches, SEZs, infrastructure &amp; recent news, with citations.</div></div>
         <div class="src-row"><span class="src-dot" style="background:#16a34a"></span><div><strong>99acres (via Apify)</strong> — live property listings &amp; ₹/sqft as a local affluence and supply signal.</div></div>
-        <div class="src-row"><span class="src-dot" style="background:#6b7390"></span><div><strong>Wikipedia &amp; India Post</strong> — area context paragraph, PIN code &amp; district.</div></div>
-        <div class="src-row"><span class="src-dot" style="background:#0ea5e9"></span><div><strong>OpenStreetMap</strong> — background POI density as a demand backdrop.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#6b7390"></span><div><strong>India Post</strong> — PIN code &amp; district lookup.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#0ea5e9"></span><div><strong>OpenStreetMap</strong> — background density of local places as a demand backdrop.</div></div>
       </div>
       <p class="info-foot">Built for the Ganit Inc. ideathon · <em>Data Speaks</em>.</p>
     </div>

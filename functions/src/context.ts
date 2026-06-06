@@ -172,6 +172,7 @@ function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: numb
 }
 
 // Per-hex proximity to the nearest POI of each factor.
+export interface NearbyPlace { name: string; meters: number; id?: string; }
 export interface NearestAmenity {
   factorKey: string;
   label: string;
@@ -180,6 +181,8 @@ export interface NearestAmenity {
   name: string;
   meters: number;
   sign: 1 | -1;
+  id?: string;                 // Places id of the nearest, for a Google Maps link
+  others?: NearbyPlace[];      // additional places of the same type (for "+N more")
 }
 
 export interface HexContext {
@@ -204,15 +207,16 @@ export function hexContext(
   pois: ContextPoi[],
 ): HexContext {
   const factors = PROFILES[vertical] ?? [];
-  const byKey = new Map<string, ContextFactor>(factors.map((f) => [f.key, f]));
 
-  // nearest POI per factor
-  const nearestByFactor = new Map<string, { poi: ContextPoi; meters: number }>();
+  // All POIs per factor, sorted nearest-first (so we can show "+N more").
+  const byFactor = new Map<string, { poi: ContextPoi; meters: number }[]>();
   for (const p of pois) {
     const m = haversineM({ lat: hexLat, lng: hexLng }, p);
-    const cur = nearestByFactor.get(p.factorKey);
-    if (!cur || m < cur.meters) nearestByFactor.set(p.factorKey, { poi: p, meters: m });
+    const list = byFactor.get(p.factorKey) ?? [];
+    list.push({ poi: p, meters: m });
+    byFactor.set(p.factorKey, list);
   }
+  for (const list of byFactor.values()) list.sort((a, b) => a.meters - b.meters);
 
   let access = 0;
   let demand = 0;
@@ -221,8 +225,9 @@ export function hexContext(
   const nearest: NearestAmenity[] = [];
 
   for (const f of factors) {
-    const hit = nearestByFactor.get(f.key);
-    if (!hit) continue;
+    const list = byFactor.get(f.key);
+    if (!list || !list.length) continue;
+    const hit = list[0];
     const prox = proximity(hit.meters, f.goodMeters); // 0..1
     const contrib = prox * f.weight * f.sign;
     if (f.feeds === "access") {
@@ -240,6 +245,8 @@ export function hexContext(
       name: hit.poi.name,
       meters: Math.round(hit.meters),
       sign: f.sign,
+      id: hit.poi.id,
+      others: list.slice(1, 6).map(o => ({ name: o.poi.name, meters: Math.round(o.meters), id: o.poi.id })),
     });
   }
 
@@ -267,18 +274,39 @@ export function proximityPhrase(nearest: NearestAmenity[], max = 3): string {
 
 // Area-level context summary fed to the AI agent so the executive narrative can
 // reference what's actually nearby. Returns a compact, factual brief.
-export function areaContextBrief(vertical: Vertical, pois: ContextPoi[]): string {
+export function areaContextBrief(
+  vertical: Vertical,
+  pois: ContextPoi[],
+  center?: { lat: number; lng: number },
+): string {
   const factors = PROFILES[vertical] ?? [];
-  const counts = new Map<string, number>();
-  for (const p of pois) counts.set(p.factorKey, (counts.get(p.factorKey) ?? 0) + 1);
 
-  const lines = factors
-    .map((f) => {
-      const n = counts.get(f.key) ?? 0;
-      return n > 0 ? `- ${n} ${f.label}(s) within ~${Math.round(f.goodMeters / 100) / 10} km` : null;
-    })
-    .filter(Boolean);
+  // Nearest actual distance per factor from the searched centre.
+  const nearestM = new Map<string, number>();
+  if (center) {
+    for (const p of pois) {
+      const m = haversineM(center, p);
+      const cur = nearestM.get(p.factorKey);
+      if (cur == null || m < cur) nearestM.set(p.factorKey, m);
+    }
+  }
 
-  if (lines.length === 0) return "";
-  return `Nearby physical context (from Google Maps), relevant to this use-case:\n${lines.join("\n")}`;
+  const fmt = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
+  const present: string[] = [];
+  const absent: string[] = [];
+
+  for (const f of factors) {
+    const m = nearestM.get(f.key);
+    if (m == null) { absent.push(f.label); continue; }
+    // "Close" = within ~2x the factor's good distance. Beyond that we report the
+    // honest distance and explicitly flag it as NOT nearby, so the model won't
+    // claim a 150-km-away port is "nearby" in a landlocked city.
+    if (m <= f.goodMeters * 2) present.push(`- nearest ${f.label}: ${fmt(m)} (close)`);
+    else present.push(`- nearest ${f.label}: ${fmt(m)} — far, treat as NOT available nearby`);
+  }
+
+  if (!present.length && !absent.length) return "";
+  let brief = `Physical context for this use-case, measured from the searched location (from Google Maps). Only call something "nearby" if marked "close"; never invent infrastructure that isn't listed:\n${present.join("\n")}`;
+  if (absent.length) brief += `\n- not found in this area at all: ${absent.join(", ")}`;
+  return brief;
 }

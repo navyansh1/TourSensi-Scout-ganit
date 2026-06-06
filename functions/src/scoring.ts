@@ -104,6 +104,40 @@ function hexHash(hex: string): number {
   return (h % 10000) / 10000;
 }
 
+export interface PlaceQuality {
+  avgRating: number | null;
+  totalReviews: number;
+  closedShare: number;     // 0..1 share of permanently-closed nearby businesses
+  demandDelta: number;     // signed modifier to apply to demand
+}
+
+// Aggregate Google Places quality fields across the competitor set.
+export function placeQuality(competitors: Poi[]): PlaceQuality {
+  if (!competitors.length) return { avgRating: null, totalReviews: 0, closedShare: 0, demandDelta: 0 };
+  let ratingSum = 0, ratingN = 0, reviews = 0, closed = 0, withStatus = 0;
+  for (const p of competitors) {
+    if (typeof p.rating === "number") { ratingSum += p.rating; ratingN++; }
+    if (typeof p.userRatings === "number") reviews += p.userRatings;
+    if (p.businessStatus) {
+      withStatus++;
+      if (p.businessStatus === "CLOSED_PERMANENTLY") closed++;
+    }
+  }
+  const avgRating = ratingN ? ratingSum / ratingN : null;
+  const closedShare = withStatus ? closed / withStatus : 0;
+
+  // Build the modifier:
+  //  + up to ~6 for strong ratings (>4.0 good, 3.0 neutral)
+  //  + up to ~6 for healthy review volume (proven footfall, log-scaled)
+  //  - up to ~14 when a large share of nearby businesses are shuttered
+  const ratingDelta = avgRating != null ? Math.max(-4, Math.min(6, (avgRating - 3.6) * 6)) : 0;
+  const reviewDelta = Math.min(6, Math.log10(reviews + 1) * 2.2);
+  const closedDelta = -closedShare * 14;
+  const demandDelta = Math.round(ratingDelta + reviewDelta + closedDelta);
+
+  return { avgRating, totalReviews: reviews, closedShare, demandDelta };
+}
+
 export function scoreHexes(inputs: ScoreInputs): HexScore[] {
   const hexes = hexesInBbox(inputs.bbox);
   const competitorByHex = countPerHex(inputs.competitors);
@@ -119,6 +153,14 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
   // Quadrant lookup
   const qLookup: Record<string, number> = {};
   for (const q of inputs.quadrantScores) qLookup[q.quadrant] = q.growthScore;
+
+  // --- Area-level "place quality" signal from Google Places fields ---------
+  // These come free in the competitor search. They tell us whether the
+  // surrounding commerce is *thriving* (lots of reviews, high ratings = proven
+  // footfall) or *dying* (many permanently-closed businesses). Applied as a
+  // gentle area-wide demand modifier so a busy, well-reviewed high street reads
+  // better than an equally-dense but stagnant or shuttered one.
+  const quality = placeQuality(inputs.competitors);
 
   return hexes.map(hex => {
     const [lat, lng] = h3.cellToLatLng(hex);
@@ -159,6 +201,9 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
     );
     // Hard reality check: nothing nearby = genuinely weak demand.
     if (!hasAnyDemandSignal) demand = Math.round(demand * 0.45);
+    // Place-quality modifier: thriving, well-reviewed commerce lifts demand;
+    // a high closed-business share drags it down. Capped to a gentle ±12.
+    demand = Math.round(Math.max(0, Math.min(100, demand + quality.demandDelta)));
 
     // --- SATURATION (shown as "free space"; higher = less competition) --
     // An empty area is only an *opportunity* if there's demand to capture.

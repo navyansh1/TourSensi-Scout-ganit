@@ -10,6 +10,10 @@ export interface GeocodeResult {
   area: string;
   city: string;
   pin?: string;
+  // True when the match is broad (a whole city / district / state) rather than a
+  // specific neighbourhood. The UI uses this to nudge the user to be more precise.
+  broad: boolean;
+  matchLevel: string;
 }
 
 export async function geocodeIndia(query: string): Promise<GeocodeResult | null> {
@@ -55,6 +59,15 @@ export async function geocodeIndia(query: string): Promise<GeocodeResult | null>
   }
   if (!area) area = city;
 
+  // Decide how specific the match is. If the top result is a whole city /
+  // district / state (and not a sublocality/neighborhood/premise), it's "broad".
+  const types: string[] = r.types ?? [];
+  const SPECIFIC = ["sublocality", "sublocality_level_1", "neighborhood", "premise", "route", "street_address", "point_of_interest", "establishment"];
+  const BROAD = ["locality", "administrative_area_level_1", "administrative_area_level_2", "administrative_area_level_3", "country"];
+  const hasSpecific = types.some(t => SPECIFIC.includes(t));
+  const broad = !hasSpecific && types.some(t => BROAD.includes(t));
+  const matchLevel = types[0] ?? "unknown";
+
   return {
     formattedAddress: r.formatted_address,
     lat: loc.lat,
@@ -68,6 +81,8 @@ export async function geocodeIndia(query: string): Promise<GeocodeResult | null>
     area,
     city,
     pin: pin ?? await reversePin(loc.lat, loc.lng, key),
+    broad,
+    matchLevel,
   };
 }
 

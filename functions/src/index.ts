@@ -20,9 +20,10 @@ import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { runGrowthAgent } from "./agent";
 import { getRealEstateSignals } from "./realestate";
-import { scoreHexes, topRecommendations } from "./scoring";
+import { scoreHexes, topRecommendations, placeQuality } from "./scoring";
 import { parseFile, suggestColumnMapping, applyMapping } from "./importLocations";
-import { wikiContext } from "./wikipedia";
+// Wikipedia context is currently disabled (see analyze-stream). Kept for re-enable.
+// import { wikiContext } from "./wikipedia";
 import { pinInfo } from "./census";
 import { getZoneInsight, type ZoneFacts } from "./zoneInsight";
 
@@ -81,11 +82,12 @@ router.post("/analyze-stream", async (req, res) => {
     const geo = await geocodeIndia(location);
     if (!geo) { send("error", { message: "Could not geocode" }); res.end(); return; }
     send("progress", { step: "geocode", label: `📍 Found ${geo.formattedAddress}`, done: true });
+    if (geo.broad) send("notice", { kind: "broad-location", area: geo.area || geo.city });
 
     const company = companyId ? getCompany(companyId) : undefined;
     const placeType = VERTICAL_PLACES_TYPE[vertical];
 
-    send("progress", { step: "competitors", label: `🔴 Pulling ${placeType} POIs from Google Places…` });
+    send("progress", { step: "competitors", label: `🔴 Finding nearby ${placeType} locations…` });
     send("progress", { step: "own", label: company ? `🟢 Finding your ${company.name} sites…` : "🟢 (skipped, no company selected)" });
     send("progress", { step: "overlay", label: "🗺️ Mapping nearby metro/roads/anchors (Google Maps)…" });
     send("progress", { step: "wiki", label: "📖 Fetching Wikipedia geo-context…" });
@@ -98,7 +100,7 @@ router.post("/analyze-stream", async (req, res) => {
       vertical, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000,
     }).catch(() => []);
     send("progress", { step: "overlay", label: `🗺️ ${contextPois.length} nearby context POIs mapped`, done: true });
-    const contextBrief = areaContextBrief(vertical, contextPois);
+    const contextBrief = areaContextBrief(vertical, contextPois, { lat: geo.lat, lng: geo.lng });
 
     const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, agent] = await Promise.allSettled([
       competitorsInArea({ category: placeType, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000 })
@@ -108,9 +110,11 @@ router.post("/analyze-stream", async (req, res) => {
         : Promise.resolve([])
       ).then(r => { send("progress", { step: "own", label: `🟢 ${r.length} of your sites identified`, done: true }); return r; }),
       osmPois({ vertical, ...geo.bbox }).catch(() => []),
-      wikiContext(geo.area, geo.city)
-        .then(r => { send("progress", { step: "wiki", label: r ? `📖 ${r.title}` : "📖 (no Wikipedia entry)", done: true }); return r; })
-        .catch(() => null),
+      // Wikipedia context disabled (kept for easy re-enable):
+      // wikiContext(geo.area, geo.city)
+      //   .then(r => { send("progress", { step: "wiki", label: r ? `📖 ${r.title}` : "📖 (no Wikipedia entry)", done: true }); return r; })
+      //   .catch(() => null),
+      Promise.resolve(null),
       geo.pin ? pinInfo(geo.pin).catch(() => null) : Promise.resolve(null),
       getRealEstateSignals({ city: geo.city, area: geo.area })
         .then(r => { send("progress", { step: "realestate", label: `🏠 ${r.sampleSize} listings, ${r.listings?.length ?? 0} sampled`, done: true }); return r; }),
@@ -150,6 +154,17 @@ router.post("/analyze-stream", async (req, res) => {
     const recs = topRecommendations(hexes, 5);
     send("progress", { step: "score", label: `📊 Scored ${hexes.length} hexes, picked top ${recs.length}`, done: true });
 
+    // Honesty pass: don't let the exec summary be a cheerleader. If the searched
+    // area is saturated or simply weak, downgrade the recommendation and state
+    // the market reality plainly. (The agent runs in parallel so it may not have
+    // seen the final counts — this enforces it deterministically.)
+    applyHonesty(agentResult, {
+      vertical, area: geo.area,
+      competitorCount: competitorsList.length,
+      ownCount: ownList.length,
+      hexes,
+    });
+
     const trailId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await admin.firestore().collection("agent_trails").doc(trailId).set({
       area: agentResult.area, city: agentResult.city,
@@ -174,6 +189,7 @@ router.post("/analyze-stream", async (req, res) => {
         trail: agentResult.trail,
       },
       hexes, recommendations: recs,
+      placeQuality: placeQuality(competitorsList),
       competitorsList, ownList,
     });
     res.end();
@@ -212,7 +228,7 @@ router.post("/analyze", async (req, res) => {
     const contextPois = await fetchContextPois({
       vertical, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000,
     }).catch(() => []);
-    const contextBrief = areaContextBrief(vertical, contextPois);
+    const contextBrief = areaContextBrief(vertical, contextPois, { lat: geo.lat, lng: geo.lng });
 
     // Fan out: competitors, our brand, OSM, real estate, and the agent — all in parallel.
     const [competitors, ownBrand, osmBackdrop, realEstate, agent] = await Promise.allSettled([
@@ -329,6 +345,51 @@ router.get("/agent-trail/:id", async (req, res) => {
   if (!snap.exists) { res.status(404).json({ error: "not found" }); return; }
   res.json(snap.data());
 });
+
+// Deterministic honesty pass over the executive summary. Ensures the blue
+// sidebar card never forces an optimistic verdict on a saturated or weak area,
+// and surfaces the plain market reality.
+function applyHonesty(
+  agentResult: any,
+  ctx: { vertical: Vertical; area: string; competitorCount: number; ownCount: number; hexes: { final: number }[] },
+) {
+  const ex = agentResult.executive;
+  if (!ex) return;
+
+  const finals = ctx.hexes.map(h => h.final);
+  const bestFinal = finals.length ? Math.max(...finals) : 0;
+  const avgFinal = finals.length ? Math.round(finals.reduce((a, b) => a + b, 0) / finals.length) : 0;
+
+  const VERTICAL_NOUN: Record<string, string> = {
+    BFSI_ATM: "ATMs", BFSI_BRANCH: "bank branches",
+    FMCG_RETAIL: "stores", FMCG_WAREHOUSE: "warehouses/dark stores",
+  };
+  const noun = VERTICAL_NOUN[ctx.vertical] ?? "sites";
+
+  // Saturation: lots of competitors and/or the company already operates several
+  // sites here, while there's little headroom (best zone not strong).
+  const saturated = (ctx.competitorCount >= 12 || ctx.ownCount >= 4) && bestFinal < 68;
+  const weak = bestFinal < 50;
+
+  if (!ex.marketState) {
+    const parts: string[] = [];
+    if (ctx.competitorCount > 0) parts.push(`${ctx.competitorCount} competing ${noun} already here`);
+    if (ctx.ownCount > 0) parts.push(`you already run ${ctx.ownCount}`);
+    parts.push(`best zone scores ${bestFinal}/100`);
+    ex.marketState = `${ctx.area}: ${parts.join(", ")}.`;
+  }
+
+  if (weak) {
+    ex.recommendation = "AVOID";
+    ex.rating = Math.min(ex.rating ?? 2, 2);
+    if (!/avoid|elsewhere|other/i.test(ex.bottomLine || "")) {
+      ex.bottomLine = `This area is a weak bet (best zone only ${bestFinal}/100). ${ex.alternatives?.length ? "Consider the alternatives below instead." : "Look at adjacent micro-markets before committing."}`;
+    }
+  } else if (saturated && ex.recommendation === "GO") {
+    ex.recommendation = "CAUTION";
+    ex.rating = Math.min(ex.rating ?? 3, 3);
+  }
+}
 
 export const api = onRequest(
   {

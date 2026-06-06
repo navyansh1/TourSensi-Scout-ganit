@@ -33,6 +33,8 @@ export interface ExecutiveSummary {
   drivers: ExecutiveDriver[];
   risks: ExecutiveDriver[];
   bottomLine: string;
+  marketState?: string;      // honest one-liner on saturation/competition in the searched area
+  alternatives?: string[];   // suggested other localities when this area is weak/saturated
 }
 
 export interface AgentResult {
@@ -120,7 +122,15 @@ async function runWithLimit<T>(tasks: (() => Promise<T>)[], limit: number): Prom
   return results;
 }
 
-export async function runGrowthAgent(opts: { area: string; city: string; extraContext?: string; contextBrief?: string }): Promise<AgentResult> {
+export interface AreaStats {
+  vertical?: string;
+  competitorCount: number;     // total competitor sites in the searched area
+  ownCount: number;            // your own sites already in the area
+  avgFinal?: number;           // mean hex suitability across the area
+  bestFinal?: number;          // best hex suitability in the area
+}
+
+export async function runGrowthAgent(opts: { area: string; city: string; extraContext?: string; contextBrief?: string; areaStats?: AreaStats }): Promise<AgentResult> {
   const queries = SEARCH_TEMPLATES.map(t => t.replace("{area}", opts.area).replace("{city}", opts.city));
 
   // 8 grounded queries — capped at 4 concurrent so we don't hit Vertex 429s
@@ -151,7 +161,7 @@ export async function runGrowthAgent(opts: { area: string; city: string; extraCo
   ];
   const overallGrowth = Math.round(quadrantScores.reduce((s, q) => s + q.growthScore, 0) / 4);
 
-  const executive = await synthesize(opts, trail, overallGrowth, opts.contextBrief);
+  const executive = await synthesize(opts, trail, overallGrowth, opts.contextBrief, opts.areaStats);
 
   return {
     area: opts.area,
@@ -169,37 +179,44 @@ async function synthesize(
   trail: AgentTrailItem[],
   growthScore: number,
   contextBrief?: string,
+  areaStats?: AreaStats,
 ): Promise<ExecutiveSummary> {
   const model = vertex().getGenerativeModel({ model: "gemini-2.5-flash" });
-  const prompt = `You are a top-tier MBA consultant writing a one-page site-selection brief for an executive.
+
+  const statsLine = areaStats
+    ? `Market reality in ${opts.area} for this use-case: ${areaStats.competitorCount} competitor site(s) already operating here, and the company already has ${areaStats.ownCount} of its own site(s) in this area. Best zone scores only ${areaStats.bestFinal ?? "?"}/100; area average ${areaStats.avgFinal ?? "?"}/100.`
+    : "";
+
+  const prompt = `You are a top-tier, BRUTALLY HONEST MBA consultant writing a one-page site-selection brief. Do NOT be a cheerleader — if this area is a bad bet, say so plainly.
 Location: ${opts.area}, ${opts.city}, India
 Overall growth score (0-100): ${growthScore}
-${opts.extraContext ? `Additional context:\n${opts.extraContext}\n` : ""}
-${contextBrief ? `${contextBrief}\nUse this physical context: reference specific nearby amenities (e.g. "300 m from a metro station", "adjacent to a major highway") where they support or undermine the site.\n` : ""}
+${statsLine ? statsLine + "\n" : ""}${opts.extraContext ? `Additional context:\n${opts.extraContext}\n` : ""}
+${contextBrief ? `${contextBrief}\nReference specific nearby amenities where they support or undermine the site. Never call something nearby unless the context says it is "close".\n` : ""}
 
 Research findings (from grounded Google searches):
 ${trail.map((t, i) => `### Finding ${i + 1}: ${t.query}\n${t.summary}`).join("\n\n")}
 
-Write the brief. Respond ONLY with strict JSON of this exact shape:
+HONESTY RULES (critical):
+- If the area is already SATURATED (many competitors / the company already has sites here) or the best zone score is low (<50), recommend "CAUTION" or "AVOID" — do NOT force a "GO".
+- State the market reality plainly in "marketState" (e.g. "Already saturated — 18 competing ATMs and you run 6 here; little headroom.").
+- When the area is weak or saturated, populate "alternatives" with 2-3 specific nearby localities/micro-markets that are likely better, with a one-line reason each. If the area IS a good bet, "alternatives" can be an empty array.
+- Do not invent infrastructure that doesn't exist in this city.
+
+Respond ONLY with strict JSON of this exact shape:
 {
   "rating": <integer 1-5 stars>,
   "recommendation": "GO" | "CAUTION" | "AVOID",
-  "drivers": [
-    {"headline": "<short headline with a concrete fact>", "detail": "<1 sentence quantified implication>"},
-    ... 3 to 4 items
-  ],
-  "risks": [
-    {"headline": "<short headline with a concrete risk>", "detail": "<1 sentence quantified implication>"},
-    ... 2 to 3 items
-  ],
-  "bottomLine": "<2 sentences: what should the executive do? Be decisive, mention a specific action.>"
+  "marketState": "<one honest sentence on competition/saturation here>",
+  "drivers": [ {"headline": "<short headline with a concrete fact>", "detail": "<1 sentence quantified implication>"}, ... 2 to 4 ],
+  "risks": [ {"headline": "<short headline with a concrete risk>", "detail": "<1 sentence quantified implication>"}, ... 2 to 3 ],
+  "alternatives": ["<other locality — one-line reason>", "... 0 to 3 (only when this area is weak)"],
+  "bottomLine": "<2 sentences: decisive action. If AVOID, say so and point elsewhere.>"
 }
 
 Style rules:
-- Headlines must contain SPECIFIC facts (year, name, $/₹ amount, or count) not generalities.
-- BAD: "Metro is expanding". GOOD: "Chennai Metro Phase 2 opens Q4 2027 within 800m"
-- Details should QUANTIFY the impact when possible ("adds ~40K daily commuter footfall").
-- Bottom line must be ACTIONABLE ("Open 1 premium-segment branch, defer ATM rollout").`;
+- Headlines must contain SPECIFIC facts (year, name, ₹ amount, or count), not generalities.
+- BAD: "Metro is expanding". GOOD: "Chennai Metro Phase 2 opens Q4 2027 within 800m".
+- Quantify impact where possible ("adds ~40K daily commuter footfall").`;
 
   // Retry synthesis up to 3 times with exponential backoff on 429s
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -213,6 +230,8 @@ Style rules:
         recommendation: ["GO", "CAUTION", "AVOID"].includes(parsed.recommendation) ? parsed.recommendation : "CAUTION",
         drivers: Array.isArray(parsed.drivers) ? parsed.drivers.slice(0, 4) : [],
         risks: Array.isArray(parsed.risks) ? parsed.risks.slice(0, 3) : [],
+        marketState: parsed.marketState ? String(parsed.marketState) : undefined,
+        alternatives: Array.isArray(parsed.alternatives) ? parsed.alternatives.map(String).slice(0, 3) : [],
         bottomLine: String(parsed.bottomLine || ""),
       };
     } catch (e) {

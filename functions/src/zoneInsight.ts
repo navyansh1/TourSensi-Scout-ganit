@@ -36,6 +36,7 @@ export interface ZoneFacts {
   pricePerSqft?: number | null;
   distanceKm?: number;
   nearest?: { label: string; meters: number; sign: number }[];
+  placeQuality?: { avgRating?: number | null; totalReviews?: number; closedShare?: number } | null;
 }
 
 export interface ZoneInsight {
@@ -61,13 +62,17 @@ function deriveVerdict(f: ZoneFacts): "OPEN" | "CONSIDER" | "AVOID" {
 // UI always shows facts even if the AI call fails.
 function baseFacts(f: ZoneFacts): string[] {
   const facts: string[] = [];
-  facts.push(`Composite suitability score: ${f.final}/100 (demand ${f.demand}, free-space ${f.saturation}, access ${f.access}, growth ${f.growth}).`);
-  facts.push(`${f.competitorCount} competitor site(s) and ${f.ownBrandCount} of your own site(s) inside this ~460 m hex.`);
-  if (f.pricePerSqft) facts.push(`Local real-estate ~₹${Math.round(f.pricePerSqft).toLocaleString("en-IN")}/sqft (affluence proxy).`);
-  if (typeof f.distanceKm === "number") facts.push(`~${f.distanceKm} km from the searched centre.`);
-  for (const n of (f.nearest ?? []).slice(0, 4)) {
+  facts.push(`**${f.competitorCount} competitor(s)**, ${f.ownBrandCount} own site(s) in this zone.`);
+  if (f.pricePerSqft) facts.push(`Real estate **₹${Math.round(f.pricePerSqft).toLocaleString("en-IN")}/sqft**.`);
+  // Only list amenities that are genuinely close (≤1.5 km) to avoid implying far things are near.
+  for (const n of (f.nearest ?? []).filter(n => n.sign > 0 && n.meters <= 1500).slice(0, 2)) {
     const dist = n.meters >= 1000 ? `${(n.meters / 1000).toFixed(1)} km` : `${n.meters} m`;
-    facts.push(`${dist} from the nearest ${n.label.split(" / ")[0]}.`);
+    facts.push(`**${dist}** from a ${n.label.split(" / ")[0]}.`);
+  }
+  const q = f.placeQuality;
+  if (q) {
+    if (q.avgRating != null && q.totalReviews) facts.push(`Local businesses **${q.avgRating.toFixed(1)}★** (~${q.totalReviews.toLocaleString("en-IN")} reviews).`);
+    if (q.closedShare && q.closedShare > 0.15) facts.push(`⚠ **${Math.round(q.closedShare * 100)}% shut down** nearby — weakening high street.`);
   }
   return facts;
 }
@@ -93,32 +98,41 @@ export async function getZoneInsight(f: ZoneFacts): Promise<ZoneInsight> {
     if (cached.exists) return cached.data() as ZoneInsight;
   } catch { /* cache read best-effort */ }
 
-  const proximityLine = (f.nearest ?? [])
-    .slice(0, 5)
-    .map(n => `${n.label} at ${n.meters} m`)
-    .join("; ") || "no notable amenities mapped nearby";
+  // Honest proximity: label something "nearby" only when it is genuinely close.
+  // Otherwise state the real distance so the AI can't imply a far-off port/airport
+  // is "nearby". If nothing relevant is actually near, say so plainly.
+  const fmtDist = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
+  const near = (f.nearest ?? []).filter(n => n.sign > 0);
+  const close = near.filter(n => n.meters <= 1500);
+  const far = near.filter(n => n.meters > 1500);
+  const proximityLine = [
+    close.length ? `Genuinely close by: ${close.slice(0, 5).map(n => `${n.label.split(" / ")[0]} (${fmtDist(n.meters)})`).join(", ")}.` : "",
+    far.length ? `Far away (do NOT call these "nearby"): ${far.slice(0, 4).map(n => `${n.label.split(" / ")[0]} (${fmtDist(n.meters)})`).join(", ")}.` : "",
+    (!close.length && !far.length) ? "No notable supporting landmarks were found close to this spot." : "",
+  ].filter(Boolean).join(" ");
 
-  const prompt = `You are a site-selection analyst. Decide whether the company should open ${what} at this exact spot, and explain WHY with logic and current facts. Use Google Search to ground recent, location-specific facts (new infrastructure, demographics, commercial activity) for ${f.area}, ${f.city}, India.
+  const prompt = `You are a site-selection analyst advising on opening ${what} at one specific spot. Be concise, decisive and HONEST. Use Google Search for current, location-specific facts about ${f.area}, ${f.city}, India.
 
-This specific zone (a ~460 m hex at ${f.lat.toFixed(4)}, ${f.lng.toFixed(4)} in ${f.area}, ${f.city}):
-- Composite suitability: ${f.final}/100 (our model leans toward "${verdict}")
-- Demand sub-score: ${f.demand}/100
-- Free-space (low competition) sub-score: ${f.saturation}/100
-- Accessibility sub-score: ${f.access}/100
-- Future-growth sub-score: ${f.growth}/100
-- Competitors in this hex: ${f.competitorCount}; own sites: ${f.ownBrandCount}
+THE SPOT (a ~460 m zone at ${f.lat.toFixed(4)}, ${f.lng.toFixed(4)} in ${f.area}, ${f.city}):
+- Composite suitability ${f.final}/100 → model leans "${verdict}"
+- Demand ${f.demand}, free-space ${f.saturation}, access ${f.access}, future-growth ${f.growth} (all /100)
+- ${f.competitorCount} competitor(s) and ${f.ownBrandCount} of own sites inside this zone
 - Real estate: ${f.pricePerSqft ? `₹${Math.round(f.pricePerSqft)}/sqft` : "unknown"}
-- Nearby physical context: ${proximityLine}
+- Physical context: ${proximityLine}
 
-Be DECISIVE and HONEST. If it's a weak zone, say clearly why NOT to open here. If strong, justify it. Tie every point to a concrete fact or number — no generic filler.
+STRICT RULES:
+- Tailor every point to THIS use-case (${what}). E.g. a warehouse cares about wide roads, highways, rail/air freight; an ATM/branch cares about footfall, safety, parking; a store cares about residential demand and schools.
+- NEVER claim an amenity is "nearby" unless it is in the "Genuinely close by" list. If the use-case wants something (e.g. a port/airport for a warehouse) and it is far or absent, say so honestly ("nearest major port is ~X km — not viable for sea-freight logistics").
+- Do NOT invent infrastructure. If a feature does not exist in this city, say it's absent.
+- Keep each bullet SHORT (max ~16 words). Wrap the 1-2 key terms in each bullet in **double asterisks** for bolding.
 
 Respond ONLY with strict JSON:
 {
   "verdict": "OPEN" | "CONSIDER" | "AVOID",
-  "headline": "<one punchy sentence verdict>",
-  "facts": ["<concrete current fact 1 (with number/name/year)>", "... 2 to 4 grounded facts you found>"],
-  "reasoning": ["<logical reason tied to a fact>", "... 3 to 4 bullets, mixing for/against honestly>"],
-  "bottomLine": "<2 sentences: decisive action for THIS zone>"
+  "headline": "<one short sentence (max ~14 words), key term in **bold**>",
+  "facts": ["<short grounded fact with a number/name/year, **bold** key term>", "... 2 to 3 only>"],
+  "reasoning": ["<short reason for this use-case, **bold** key term>", "... 3 to 4, honest mix of for/against>"],
+  "bottomLine": "<ONE short, decisive sentence for this spot>"
 }`;
 
   const model = vertex().getGenerativeModel({

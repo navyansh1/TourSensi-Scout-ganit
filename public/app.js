@@ -50,31 +50,18 @@ function initMap() {
     center: { lat: 20.5937, lng: 78.9629 },
     zoom: 5,
     styles: brandMapStyle(),
-    // Map-type switcher (Map / Satellite / Hybrid / Terrain) as a dropdown, top-right.
-    mapTypeControl: true,
-    mapTypeControlOptions: {
-      style: google.maps.MapTypeControlStyle.DROPDOWN_MENU,
-      position: google.maps.ControlPosition.TOP_RIGHT,
-      mapTypeIds: ["roadmap", "satellite", "hybrid", "terrain"],
-    },
-    streetViewControl: true,
-    streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
-    fullscreenControl: true,
-    fullscreenControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
-    // Single, clean zoom control anchored bottom-right (was crowding RIGHT_CENTER).
-    zoomControl: true,
-    zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+    // All native on-map controls are OFF — we drive the map from custom buttons
+    // in the top bar instead, so nothing on the map can be hidden by the panel.
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    zoomControl: false,
     gestureHandling: "greedy", // scroll-to-zoom without holding ctrl
     clickableIcons: false,     // don't intercept clicks on Google's own POIs
   });
 
-  // Our custom light style only applies to the roadmap base. When the user
-  // switches to satellite/hybrid/terrain, clear it so imagery isn't tinted.
-  map.addListener("maptypeid_changed", () => {
-    map.setOptions({ styles: map.getMapTypeId() === "roadmap" ? brandMapStyle() : null });
-  });
-
   infoWindow = new google.maps.InfoWindow();
+  initMapControls();
 
   const input = document.getElementById("location");
   const ac = new google.maps.places.Autocomplete(input, {
@@ -85,6 +72,46 @@ function initMap() {
     const p = ac.getPlace();
     if (p.geometry?.location) { map.panTo(p.geometry.location); map.setZoom(14); }
   });
+}
+
+// Custom top-bar controls that drive the map directly (mimic Google's own
+// terrain / labels / zoom controls, but living in our header).
+let _labelsOn = true;
+function applyMapStyle() {
+  // Only the roadmap base is styled; satellite/terrain ignore styles.
+  const isRoadmap = map.getMapTypeId() === "roadmap";
+  if (!isRoadmap) { map.setOptions({ styles: null }); return; }
+  const base = brandMapStyle();
+  const labelsOff = [
+    { elementType: "labels", stylers: [{ visibility: "off" }] },
+    { featureType: "road", elementType: "labels", stylers: [{ visibility: "off" }] },
+  ];
+  map.setOptions({ styles: _labelsOn ? base : base.concat(labelsOff) });
+}
+
+function initMapControls() {
+  // Map type buttons
+  document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      map.setMapTypeId(btn.dataset.maptype);
+      applyMapStyle();
+    };
+  });
+  // Labels toggle
+  const labelsBtn = document.getElementById("labelsToggle");
+  if (labelsBtn) {
+    labelsBtn.classList.add("active");
+    labelsBtn.onclick = () => {
+      _labelsOn = !_labelsOn;
+      labelsBtn.classList.toggle("active", _labelsOn);
+      applyMapStyle();
+    };
+  }
+  // Zoom
+  document.getElementById("zoomInBtn").onclick = () => map.setZoom((map.getZoom() ?? 12) + 1);
+  document.getElementById("zoomOutBtn").onclick = () => map.setZoom((map.getZoom() ?? 12) - 1);
 }
 
 // Draggable divider between the sidebar and the map.
@@ -229,10 +256,11 @@ async function onAnalyze() {
         buffer = buffer.slice(idx + 2);
         if (!evt) continue;
         if (evt.event === "progress") onProgress(evt.data);
+        else if (evt.event === "notice") onNotice(evt.data);
         else if (evt.event === "result") {
           lastResult = evt.data;
           renderResult(evt.data);
-          finishProgress(`✓ Done · ${evt.data.counts.competitors} competitors · ${evt.data.counts.ownBrand} of your sites · growth ${evt.data.agent.growthScore}/100`);
+          finishProgress();
         } else if (evt.event === "error") throw new Error(evt.data.message);
       }
     }
@@ -253,73 +281,88 @@ function parseSSE(raw) {
 }
 
 // ---------- progress ----------
-// A natural, narrated flow rather than a rigid "pulled / not pulled" checklist.
-// A rotating set of human phrases plays while a progress bar steadily advances;
-// real backend SSE events nudge the bar forward so it feels alive and honest
-// without exposing the raw plumbing.
-const PROGRESS_PHRASES = [
-  "Pinpointing the location on the map…",
-  "Scanning the neighbourhood for competitors…",
-  "Mapping nearby metro, roads and landmarks…",
-  "Reading the area's demographics and history…",
-  "Checking local property prices and listings…",
-  "Researching growth signals across the web…",
-  "Weighing demand, competition and access…",
-  "Scoring every zone for site suitability…",
+// A box of parameters that auto-ticks top-to-bottom. The ticking is entirely
+// driven by a timer (fake), so it always feels like steady forward progress
+// regardless of which backend call finishes when. The real `result` event just
+// flushes any remaining ticks at the end.
+const PROGRESS_ITEMS = [
+  "Pinpointing the location",
+  "Scanning for nearby competitors",
+  "Locating your existing sites",
+  "Mapping metro, roads & landmarks",
+  "Reading area demographics & history",
+  "Checking property prices & listings",
+  "Researching growth signals on the web",
+  "Weighing demand, competition & access",
+  "Scoring every zone for suitability",
 ];
-// Map real backend step ids → how far along the bar should be (0..1).
-const STEP_PROGRESS = {
-  geocode: 0.10, competitors: 0.28, own: 0.38, overlay: 0.50,
-  wiki: 0.58, realestate: 0.70, agent: 0.88, score: 0.97,
-};
-let _progressTimer = null, _phraseTimer = null, _progressTarget = 0.06, _progressShown = 0.06, _phraseIdx = 0;
+let _tickTimer = null, _tickIdx = 0;
 
 function startProgress() {
   const panel = document.getElementById("progressPanel");
   panel.classList.remove("hidden");
-  _progressTarget = 0.06; _progressShown = 0.04; _phraseIdx = 0;
+  _tickIdx = 0;
   panel.innerHTML = `
-    <div class="progress-narrate">
-      <span class="spinner"></span>
-      <span id="progressPhrase">${PROGRESS_PHRASES[0]}</span>
-    </div>
-    <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>`;
+    <div class="progress-title">⏳ Analyzing location</div>
+    <ul class="progress-list">
+      ${PROGRESS_ITEMS.map((label, i) => `
+        <li id="pi-${i}" class="${i === 0 ? "running" : "pending"}">
+          <span class="ps-icon">${i === 0 ? '<span class="spinner"></span>' : "○"}</span>
+          <span class="ps-label">${label}</span>
+        </li>`).join("")}
+    </ul>`;
   setStatus("", "");
 
-  // Smoothly ease the displayed bar toward the target; creep slowly between
-  // events so it never looks frozen.
-  clearInterval(_progressTimer);
-  _progressTimer = setInterval(() => {
-    // gentle autonomous creep, capped just under the current target + a ceiling
-    _progressShown += (Math.max(_progressTarget, _progressShown + 0.004) - _progressShown) * 0.08;
-    _progressShown = Math.min(_progressShown, 0.985);
-    const fill = document.getElementById("progressFill");
-    if (fill) fill.style.width = `${(_progressShown * 100).toFixed(1)}%`;
-  }, 80);
-
-  // Rotate the narration phrases on a calm cadence.
-  clearInterval(_phraseTimer);
-  _phraseTimer = setInterval(() => {
-    _phraseIdx = (_phraseIdx + 1) % PROGRESS_PHRASES.length;
-    const p = document.getElementById("progressPhrase");
-    if (p) { p.style.opacity = 0; setTimeout(() => { p.textContent = PROGRESS_PHRASES[_phraseIdx]; p.style.opacity = 1; }, 180); }
-  }, 2300);
+  // Auto-tick top to bottom. Slightly varied cadence so it feels organic, and
+  // we deliberately stop one short of the last item — the real result flushes it.
+  clearInterval(_tickTimer);
+  const advance = () => {
+    if (_tickIdx >= PROGRESS_ITEMS.length - 1) return; // hold the last for the result
+    completeTick(_tickIdx);
+    _tickIdx++;
+    setRunning(_tickIdx);
+    _tickTimer = setTimeout(advance, 900 + Math.random() * 1100);
+  };
+  _tickTimer = setTimeout(advance, 700);
 }
 
-function onProgress({ step }) {
-  // Real events only nudge the bar/phrase forward — we never show the raw
-  // "X found / Y skipped" detail; the narration stays smooth and natural.
-  if (step && STEP_PROGRESS[step] != null) {
-    _progressTarget = Math.max(_progressTarget, STEP_PROGRESS[step]);
+function completeTick(i) {
+  const li = document.getElementById(`pi-${i}`);
+  if (!li) return;
+  li.className = "done";
+  li.querySelector(".ps-icon").textContent = "✓";
+}
+function setRunning(i) {
+  const li = document.getElementById(`pi-${i}`);
+  if (!li) return;
+  li.className = "running";
+  li.querySelector(".ps-icon").innerHTML = '<span class="spinner"></span>';
+}
+
+// Real SSE events are ignored for display — the tick animation is self-driven.
+function onProgress() { /* intentionally cosmetic-only; ticks are timer-driven */ }
+
+// Soft, non-blocking nudge when the user searched a whole city instead of a
+// specific neighbourhood. We still run the analysis — just hint they can sharpen it.
+let _broadNotice = "";
+function onNotice(data) {
+  if (data?.kind === "broad-location") {
+    _broadNotice = `💡 "${data.area}" is a broad area — for sharper results, try a specific locality (e.g. "Koramangala, ${data.area}").`;
   }
 }
 
-function finishProgress(msg) {
-  clearInterval(_progressTimer); clearInterval(_phraseTimer);
-  const fill = document.getElementById("progressFill");
-  if (fill) fill.style.width = "100%";
-  setTimeout(() => document.getElementById("progressPanel").classList.add("hidden"), 350);
-  setStatus(msg, "ok");
+function finishProgress() {
+  clearTimeout(_tickTimer);
+  // Flush every remaining item to ✓.
+  for (let i = 0; i < PROGRESS_ITEMS.length; i++) completeTick(i);
+  setTimeout(() => document.getElementById("progressPanel").classList.add("hidden"), 450);
+  // The designed stat card now carries the result summary; status stays clean.
+  setStatus("", "");
+  if (_broadNotice) {
+    const s = document.getElementById("status");
+    if (s) { s.className = "status hint"; s.innerHTML = `<div class="status-hint">${escapeHtml(_broadNotice)}</div>`; }
+    _broadNotice = "";
+  }
 }
 
 // ---------- render ----------
@@ -343,6 +386,9 @@ function renderResult(data) {
 
   // Context overlays
   for (const o of (data.overlay || [])) addOverlayPin(o);
+
+  // Headline stat card
+  document.getElementById("resultStats").innerHTML = renderResultStats(data);
 
   // Exec mini card in sidebar
   document.getElementById("execMini").innerHTML = renderExecMini(data);
@@ -431,6 +477,27 @@ function renderResult(data) {
   document.getElementById("summary").classList.remove("hidden");
 }
 
+// A compact, designed stat card replacing the old text status line.
+function renderResultStats(data) {
+  const c = data.counts || {};
+  const growth = data.agent?.growthScore ?? 0;
+  const best = data.recommendations?.[0]?.final ?? Math.max(0, ...(data.hexes || []).map(h => h.final));
+  const area = data.geo?.area || data.geo?.city || "this area";
+  const stat = (value, label, color) => `
+    <div class="stat">
+      <div class="stat-value" style="${color ? `color:${color}` : ""}">${value}</div>
+      <div class="stat-label">${label}</div>
+    </div>`;
+  return `
+    <div class="rs-head">📊 Analysis ready for <strong>${escapeHtml(area)}</strong></div>
+    <div class="stat-grid">
+      ${stat(c.competitors ?? 0, "Competitors", "#dc2626")}
+      ${stat(c.ownBrand ?? 0, "Your sites", "#16a34a")}
+      ${stat(`${best}`, "Best zone", scoreColor(best))}
+      ${stat(`${growth}`, "Growth", "var(--ganit-blue)")}
+    </div>`;
+}
+
 function renderExecMini(data) {
   const ex = data.agent.executive || { rating: 3, recommendation: "CAUTION", bottomLine: "" };
   const stars = "★".repeat(ex.rating) + "☆".repeat(5 - ex.rating);
@@ -440,24 +507,31 @@ function renderExecMini(data) {
       <div class="em-rec ${ex.recommendation}">${ex.recommendation}</div>
     </div>
     <div class="em-stars">${stars}</div>
+    ${ex.marketState ? `<div class="em-market">📍 ${escapeHtml(ex.marketState)}</div>` : ""}
     <div class="em-bottom">${escapeHtml(ex.bottomLine || "")}</div>
+    ${(ex.alternatives && ex.alternatives.length) ? `
+      <div class="em-alts">
+        <div class="em-alts-label">Consider instead</div>
+        ${ex.alternatives.map(a => `<div class="em-alt">↪ ${escapeHtml(a)}</div>`).join("")}
+      </div>` : ""}
     <button class="em-cta">📋 Open full executive summary →</button>
   `;
 }
 
 function renderContext(data) {
   const w = data.wiki, pin = data.pin, re = data.realEstate;
-  const blurb = w?.summary ? boldKeywords(w.summary.slice(0, 380) + (w.summary.length > 380 ? "…" : "")) : "<em>(no Wikipedia context found)</em>";
+  // Wikipedia blurb only rendered when present (the fetch is currently disabled).
+  const blurb = w?.summary ? boldKeywords(w.summary.slice(0, 380) + (w.summary.length > 380 ? "…" : "")) : "";
   return `
-    <div class="context-block">${blurb}
+    ${blurb ? `<div class="context-block">${blurb}
       ${w?.url ? `<div style="margin-top:6px"><a href="${w.url}" target="_blank" style="color:var(--ganit-blue); font-size:11px">Read more on Wikipedia ↗</a></div>` : ""}
-    </div>
+    </div>` : ""}
     <div class="context-meta">
       ${pin?.pin ? `<div class="cm-item"><strong>PIN</strong> ${pin.pin}</div>` : ""}
       ${pin?.district ? `<div class="cm-item"><strong>District</strong> ${escapeHtml(pin.district)}</div>` : ""}
       ${w?.population ? `<div class="cm-item"><strong>Population</strong> ~${w.population.toLocaleString("en-IN")}</div>` : ""}
       ${re?.medianPricePerSqft ? `<div class="cm-item"><strong>Median ₹/sqft</strong> ₹${Math.round(re.medianPricePerSqft).toLocaleString("en-IN")}</div>` : ""}
-      ${data.counts?.overlay ? `<div class="cm-item"><strong>${data.counts.overlay}</strong> context POIs</div>` : ""}
+      ${data.counts?.overlay ? `<div class="cm-item"><strong>${data.counts.overlay}</strong> nearby landmarks</div>` : ""}
     </div>`;
 }
 
@@ -524,6 +598,7 @@ function addCompetitorPin(p, color, label, kind = "competitor") {
         <div style="font-size: 10px; color: var(--muted); margin-top: 4px; font-family: monospace;">
           ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}
         </div>
+        <a class="gmaps-link" href="${gmapsUrl(p)}" target="_blank" rel="noopener">View on Google Maps ↗</a>
       </div>
     `;
     infoWindow.setContent(content);
@@ -558,6 +633,7 @@ function addOverlayPin(o) {
         <div style="font-size: 10px; color: var(--muted); margin-top: 4px; font-family: monospace;">
           ${o.lat.toFixed(5)}, ${o.lng.toFixed(5)}
         </div>
+        <a class="gmaps-link" href="${gmapsUrl(o)}" target="_blank" rel="noopener">View on Google Maps ↗</a>
       </div>
     `;
     infoWindow.setContent(content);
@@ -637,11 +713,17 @@ function showHexPanel(h, data) {
     
     ${(h.signals.nearest && h.signals.nearest.length) ? `
     <div class="subhead">What's nearby</div>
-    ${h.signals.nearest.map(n => `
-      <div class="score-row">
-        <span class="label">${n.icon} ${escapeHtml(n.label.split(" / ")[0])}</span>
-        <span class="v">${n.meters >= 1000 ? (n.meters/1000).toFixed(1) + " km" : n.meters + " m"}</span>
-      </div>`).join("")}
+    ${h.signals.nearest.map(n => {
+      const dist = (m) => m >= 1000 ? (m/1000).toFixed(1) + " km" : m + " m";
+      const moreCount = (n.others || []).length;
+      const moreChip = moreCount ? ` <span class="more-chip" title="${(n.others).map(o => `${escapeHtml(o.name)} (${dist(o.meters)})`).join(', ')}">+${moreCount}</span>` : "";
+      const link = `<a class="gmaps-inline" href="${gmapsUrl({ name: n.name, id: n.id })}" target="_blank" rel="noopener" title="Open ${escapeHtml(n.name)} on Google Maps">${escapeHtml(n.name)} ↗</a>`;
+      return `
+      <div class="score-row nearby-row">
+        <span class="label">${n.icon} ${escapeHtml(n.label.split(" / ")[0])}${moreChip}<div class="nearby-name">${link}</div></span>
+        <span class="v">${dist(n.meters)}</span>
+      </div>`;
+    }).join("")}
     ` : ""}
     ${re ? `
     <div class="subhead">Real-estate signals</div>
@@ -687,6 +769,7 @@ async function fetchZoneInsight(h, data) {
     pricePerSqft: h.signals.pricePerSqft ?? null,
     distanceKm: h.signals.distanceKm,
     nearest: (h.signals.nearest || []).map(n => ({ label: n.label, meters: n.meters, sign: n.sign })),
+    placeQuality: data?.placeQuality || null,
   };
   try {
     const resp = await fetch(`${RUN}/zone-insight`, {
@@ -712,14 +795,14 @@ function renderZoneInsight(ins) {
     <div class="zi-head">
       <span class="zi-badge ${v}">${v === "OPEN" ? "✅ OPEN HERE" : v === "AVOID" ? "⛔ AVOID" : "🤔 CONSIDER"}</span>
     </div>
-    <div class="zi-headline">${escapeHtml(ins.headline || "")}</div>
+    <div class="zi-headline">${mdBold(ins.headline || "")}</div>
     ${(ins.reasoning && ins.reasoning.length) ? `
       <div class="zi-section-label">Why${v === "AVOID" ? " not" : ""}</div>
-      <ul class="zi-reasons">${ins.reasoning.map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : ""}
+      <ul class="zi-reasons">${ins.reasoning.slice(0, 4).map(r => `<li>${mdBold(r)}</li>`).join("")}</ul>` : ""}
     ${(ins.facts && ins.facts.length) ? `
       <div class="zi-section-label">The facts</div>
-      <ul class="zi-facts">${ins.facts.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : ""}
-    ${ins.bottomLine ? `<div class="zi-bottom">${escapeHtml(ins.bottomLine)}</div>` : ""}
+      <ul class="zi-facts">${ins.facts.slice(0, 4).map(f => `<li>${mdBold(f)}</li>`).join("")}</ul>` : ""}
+    ${ins.bottomLine ? `<div class="zi-bottom">${mdBold(ins.bottomLine)}</div>` : ""}
     ${(ins.sources && ins.sources.length) ? `
       <div class="zi-sources">Sources: ${ins.sources.slice(0, 4).map(s => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener">${escapeHtml(s.title || "link")}</a>`).join(" · ")}</div>` : ""}
   `;
@@ -835,9 +918,10 @@ function hexStyle(score) {
   const t = Math.max(0, Math.min(1, score / 100));
   const topTier = score >= 75;
   return {
-    fillOpacity: 0.06 + Math.pow(t, 1.5) * 0.36,   // ~0.06 (weak) → ~0.42 (best)
-    strokeOpacity: topTier ? 0.9 : 0.35 + t * 0.35,
-    strokeWeight: topTier ? 2 : 1,
+    // Darker, more readable fills (was 0.06→0.42). Map still shows through.
+    fillOpacity: 0.22 + Math.pow(t, 1.3) * 0.45,   // ~0.22 (weak) → ~0.67 (best)
+    strokeOpacity: topTier ? 1 : 0.55 + t * 0.4,
+    strokeWeight: topTier ? 2.5 : 1.2,
   };
 }
 
@@ -880,15 +964,20 @@ function renderExpandedDetails(r, data) {
     </div>
   `);
   
-  // 2. Specific Nearby Amenities with names (clickable links to map)
+  // 2. Specific Nearby Amenities with names (clickable links to map) + "+N more"
   r.signals.nearest.forEach(n => {
+    const dist = (m) => m >= 1000 ? (m/1000).toFixed(1) + " km" : m + " m";
+    const moreCount = (n.others || []).length;
+    const moreChip = moreCount
+      ? ` <span class="more-chip" title="${(n.others).map(o => `${escapeHtml(o.name)} (${dist(o.meters)})`).join(', ')}">+${moreCount} more</span>`
+      : "";
     bullets.push(`
       <div class="rec-detail-bullet">
         <span class="icon">${n.icon}</span>
         <div>
-          <strong>${escapeHtml(n.label.split(" / ")[0])}:</strong> 
-          <a class="amenity-link" data-name="${escapeHtml(n.name)}" data-key="${n.factorKey}">${escapeHtml(n.name)}</a> 
-          (${n.meters >= 1000 ? (n.meters/1000).toFixed(1) + " km" : n.meters + " m"} away)
+          <strong>${escapeHtml(n.label.split(" / ")[0])}:</strong>
+          <a class="amenity-link" data-name="${escapeHtml(n.name)}" data-key="${n.factorKey}">${escapeHtml(n.name)}</a>
+          (${dist(n.meters)} away)${moreChip}
         </div>
       </div>
     `);
@@ -1125,6 +1214,12 @@ function openExecModal() {
 
       <!-- View 1: Summary -->
       <div id="execSummaryView">
+        ${ex.marketState ? `
+        <div class="eb-section">
+          <h4>📍 Market reality</h4>
+          <div class="bottom-line">${escapeHtml(ex.marketState)}</div>
+        </div>` : ""}
+
         <div class="eb-section drivers">
           <h4>✅ Growth drivers</h4>
           ${(ex.drivers || []).map(d => `
@@ -1156,6 +1251,14 @@ function openExecModal() {
           </div>
         </div>
   
+        ${(ex.alternatives && ex.alternatives.length) ? `
+        <div class="eb-section">
+          <h4>↪ Where to expand instead</h4>
+          <div class="alts-list">
+            ${ex.alternatives.map(a => `<div class="alt-item">${escapeHtml(a)}</div>`).join("")}
+          </div>
+        </div>` : ""}
+
         <div class="eb-section">
           <h4>🎯 Bottom line</h4>
           <div class="bottom-line">${escapeHtml(ex.bottomLine || "")}</div>
@@ -1241,6 +1344,17 @@ function setStatus(msg, kind = "") {
 }
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+// Escape, then turn **text** into <strong>text</strong> for safe inline bolding.
+function mdBold(s) {
+  return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+// Build a Google Maps listing URL for any place on the map. Prefer the Places
+// ID (lands on the exact listing); fall back to name + coordinates.
+function gmapsUrl(p) {
+  const q = encodeURIComponent(p.name || `${p.lat},${p.lng}`);
+  if (p.id) return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${encodeURIComponent(p.id)}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${p.lat},${p.lng}`)}`;
 }
 function brandMapStyle() {
   return [
