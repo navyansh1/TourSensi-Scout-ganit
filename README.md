@@ -36,7 +36,11 @@ In ~30 seconds you get:
 - **Less-generous scoring** — empty land scores red, green is earned; validated against multiple cities. Google Places **ratings / review counts / permanently-closed** share feed demand as a footfall / dying-high-street signal.
 - **Use-case-aware nearby context** — ATM → footfall+transit+safety; branch → affluence+offices; retail → schools+residential; warehouse → highways/rail/air/ports. Honest distances (never claims a far-off port is "nearby" in a landlocked city). "+N more" when several of a type are close.
 - **Maps everywhere** — every marker (competitor, your site, mall/metro/school…) has a **View on Google Maps** link.
-- **UX** — logo-matched brand colors, draggable sidebar, centered top-bar map controls (Map/Satellite/Terrain/Labels/zoom — native on-map controls hidden so the zone panel never covers them), settings panel with distinct/soft heatmap palettes, **ℹ️ About** modal listing every data source, auto-ticking progress checklist, smooth zone-to-zone glide, soft "be more specific" search nudge. Wikipedia fetch disabled (kept commented).
+- **Choosable map layers** — a top-bar **"Show on map"** dropdown lets you toggle which nearby layers (metro / mall / school / hospital / …) are drawn. By default the map shows **only your sites + competitors** to stay uncluttered.
+- **Ranked recommendations + regions to avoid** — top sites are listed **#1–#5** (clearer than the old tag labels), each chip reads "Score N/100". A separate **"⛔ Regions to avoid"** section surfaces the 3 worst, spread-out zones with a one-line reason.
+- **Accurate own-brand matching** — a returned place is only tagged as *yours* if its **name** contains a distinctive brand token (generic words like "supermarket"/"bank" are ignored), so e.g. "More" no longer matches "Grace Supermarket".
+- **Heatmap** — locked to a single **green → red** scale (theme switching disabled/commented), with thresholds tuned so weak zones clearly read red/orange. Fill opacity scales with score; map stays readable underneath.
+- **UX** — **logo-matched brand colors** (electric indigo `#1a00d9` + orange `#fe6e06`), wordmark in **Poppins** to match the Ganit logo, draggable sidebar, centered top-bar map controls (Map/Satellite/Terrain/Labels/zoom — native on-map controls hidden so the zone panel never covers them; zoom top-center), **bolded keywords** across the exec card / full summary / zone panel, bottom-line shown as bullet points, **ℹ️ About** modal listing every data source, steadily-paced progress checklist, gentle zone-to-zone glide, soft "be more specific" search nudge. Wikipedia fetch disabled (kept commented).
 
 ---
 
@@ -354,4 +358,4 @@ firebase deploy --only functions
 
 The Ganit Inc. ideathon. Service-based company, ~218 people, sells into BFSI / FMCG / retail / logistics. The pitch: turn the kind of analysis their consultants do manually (site selection, demand modelling, competitor mapping) into a productized SaaS tool — *Data Speaks*.
 
-Brand colors used throughout: **Ganit Blue `#1a2b8c`** and **Ganit Orange `#f48020`**.
+Brand colors used throughout — sampled directly from the Ganit "data speaks" logo: **Ganit Blue `#1a00d9`** (electric indigo) and **Ganit Orange `#fe6e06`**. The wordmark uses **Poppins** to match the logo.
