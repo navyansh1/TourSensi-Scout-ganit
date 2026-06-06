@@ -262,7 +262,6 @@ async function onAnalyze() {
 
   clearMap();
   document.getElementById("summary").classList.add("hidden");
-  document.getElementById("welcomePlaceholder")?.classList.add("hidden");
   document.getElementById("legend").classList.add("hidden");
   document.getElementById("execBtn")?.classList.add("hidden");
   setAnalyzeBusy(true);
@@ -301,7 +300,6 @@ async function onAnalyze() {
     console.error(e);
     setStatus(`Error: ${e.message}`, "error");
     document.getElementById("progressPanel").classList.add("hidden");
-    document.getElementById("welcomePlaceholder")?.classList.remove("hidden");
     setAnalyzeBusy(false);
   }
 }
@@ -1091,6 +1089,8 @@ function clearMap() {
     selectedPolyHighlight = null;
   }
   document.getElementById("hexPanel").classList.add("hidden");
+  const menu = document.getElementById("layersMenu");
+  if (menu) menu.innerHTML = '<div class="layers-empty">Please search for a location first</div>';
 }
 
 // Smoothly glide the map from the current zone to the clicked one, easing in a
