@@ -30,6 +30,13 @@ In ~30 seconds you get:
 
 ## What's new (latest iteration)
 
+- **Latest enhancements (June 2026)**:
+  - **Layout Stability**: Replaced the map label toggle hide logic with an `.invisible` state to prevent buttons from shifting positions when map views change.
+  - **Standard Map View**: Renamed the "Terrain" map option to "Standard" in the header to simplify map types for business users.
+  - **Premium Loading Animation**: Redesigned the Analyze button shimmer loading effect into a full-height diagonal sweep.
+  - **Clean Details Panel**: Removed repetitive bottom dividing lines between statistic rows in the zone details panel.
+  - **Score Context**: Added "Score " prefix to suitability points in the details panel for better consistency.
+  - **PDF Export Compass**: Implemented a N-S-E-W compass needle widget overlay on top of the static map snapshot inside the generated PDF and Word reports.
 - **UI/export polish** — the top-bar map controls now place **Labels** before Map/Satellite/Terrain, the Labels toggle hides on Terrain view, the visible Settings control is removed, and action icons use **Unicons** instead of emoji-style UI icons across the top bar and sidebar.
 - **Executive summary exports** — the full executive summary modal now includes **Save as PDF** and **Save as Word** actions, with a Google Static Maps snapshot that includes heatmap polygons and key site/competitor markers.
 - **Cleaner recommendation language** — visible recommendation badges now say **Highly Recommended / Proceed with Caution / Not Recommended** instead of exposing internal `GO / CAUTION / AVOID` codes.

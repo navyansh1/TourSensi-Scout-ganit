@@ -134,14 +134,14 @@ button .uil,
 .primary:hover { background: linear-gradient(135deg, var(--ganit-orange), var(--ganit-orange-2)); }
 .primary:disabled { cursor: wait; opacity: 0.96; }
 .primary.analyzing::after {
-  content: ""; position: absolute; left: -45%; right: auto; bottom: 0;
-  width: 45%; height: 3px; border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.95), transparent);
-  animation: analyze-scan 1.05s ease-in-out infinite;
+  content: ""; position: absolute; left: -50%; top: 0;
+  width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: analyze-scan 1.3s ease-in-out infinite;
 }
 @keyframes analyze-scan {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(325%); }
+  0% { transform: translateX(0) skewX(-20deg); }
+  100% { transform: translateX(320%) skewX(-20deg); }
 }
 .ghost { background: transparent; }
 .mini { padding: 6px 10px; font-size: 12px; }
@@ -438,9 +438,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
 .close:hover { color: var(--text); }
 
-.score-row { display: flex; justify-content: space-between; padding: 6px 0;
-  border-bottom: 1px solid var(--border); font-size: 13px; }
-.score-row:last-child { border-bottom: none; }
+.score-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
 .score-row .label { color: var(--muted); }
 .score-row .v { font-weight: 600; }
 .final-pill { display: inline-block; padding: 5px 12px; border-radius: 8px;
@@ -642,6 +640,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .hidden { display: none !important; }
+.invisible { visibility: hidden !important; }
 
 /* Map marker overlay text labels */
 .marker-label.overlay {

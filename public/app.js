@@ -121,7 +121,7 @@ function initMapControls() {
 function updateLabelsControlVisibility() {
   const labelsBtn = document.getElementById("labelsToggle");
   if (!labelsBtn || !map) return;
-  labelsBtn.classList.toggle("hidden", map.getMapTypeId() === "terrain");
+  labelsBtn.classList.toggle("invisible", map.getMapTypeId() === "terrain");
 }
 
 // Draggable divider between the sidebar and the map.
@@ -821,7 +821,7 @@ function showHexPanel(h, data) {
   
   document.getElementById("hexBody").innerHTML = `
     ${h.tag ? `<div class="rec-tag tag-${h.tag}" style="margin-bottom:8px; background: ${scoreColor(h.final)}">${TAG_LABELS[h.tag]}</div>` : ""}
-    <div style="margin-bottom: 14px"><span class="final-pill" style="background:${scoreColor(h.final)}">${h.final}/100</span></div>
+    <div style="margin-bottom: 14px"><span class="final-pill" style="background:${scoreColor(h.final)}">Score ${h.final}/100</span></div>
 
     <div id="zoneInsight" class="zone-insight loading">
       <div class="zi-spinner"><span class="spinner"></span> Analyzing this zone with AI…</div>
@@ -1487,7 +1487,22 @@ function buildExecutiveReportHtml() {
       h2 { color: #1a00d9; font-size: 15px; margin-top: 24px; text-transform: uppercase; }
       .meta { color: #6b7390; margin-bottom: 18px; }
       .rec { display: inline-block; padding: 6px 10px; border-radius: 6px; background: #16a34a; color: #fff; font-weight: bold; }
-      .snapshot { width: 100%; max-height: 520px; object-fit: cover; border: 1px solid #e1e5ee; border-radius: 8px; margin: 16px 0; }
+      .map-container { position: relative; width: 100%; max-height: 520px; margin: 16px 0; }
+      .snapshot { width: 100%; max-height: 520px; object-fit: cover; border: 1px solid #e1e5ee; border-radius: 8px; display: block; }
+      .pdf-compass {
+        position: absolute; left: 16px; top: 16px;
+        width: 52px; height: 52px; border-radius: 50%;
+        background: rgba(255,255,255,0.95); border: 1px solid #e1e5ee;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.12); z-index: 6;
+        font-family: Arial, sans-serif;
+        font-size: 10px; font-weight: 800; color: #4a5168;
+      }
+      .pdf-compass span { position: absolute; transform: translate(-50%, -50%); }
+      .pdf-compass .cmp-n { left: 50%; top: 22%; color: #dc2626; }
+      .pdf-compass .cmp-s { left: 50%; top: 78%; }
+      .pdf-compass .cmp-e { left: 78%; top: 50%; }
+      .pdf-compass .cmp-w { left: 22%; top: 50%; }
+      .pdf-compass .cmp-needle { left: 50%; top: 50%; font-size: 22px; color: #1a00d9; line-height: 1; }
       .box { background: #f6f7fb; border-left: 4px solid #fe6e06; padding: 12px 14px; border-radius: 0 8px 8px 0; }
       table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
       th, td { border-bottom: 1px solid #e1e5ee; padding: 8px; text-align: left; }
@@ -1500,7 +1515,18 @@ function buildExecutiveReportHtml() {
     <div class="meta">${escapeHtml(data.geo.formattedAddress)} | ${escapeHtml(data.vertical.replace("_", " - "))} | ${escapeHtml(data.company?.name || "no company selected")}</div>
     <div class="rec">${recommendationLabel(ex.recommendation || "CAUTION")}</div>
     <div style="font-size:22px;color:#fe6e06;margin-top:8px">${stars}</div>
-    ${snapshot ? `<img class="snapshot" src="${snapshot}" alt="Map snapshot with heatmap" />` : ""}
+    ${snapshot ? `
+    <div class="map-container">
+      <img class="snapshot" src="${snapshot}" alt="Map snapshot with heatmap" />
+      <div class="pdf-compass">
+        <span class="cmp-n">N</span>
+        <span class="cmp-e">E</span>
+        <span class="cmp-s">S</span>
+        <span class="cmp-w">W</span>
+        <span class="cmp-needle">▲</span>
+      </div>
+    </div>
+    ` : ""}
     ${ex.marketState ? `<h2>Market Reality</h2><div class="box">${boldKeywords(ex.marketState)}</div>` : ""}
     <h2>Growth Drivers</h2>
     <ul>${(ex.drivers || []).map(d => `<li><strong>${boldKeywords(d.headline)}</strong>: ${boldKeywords(d.detail)}</li>`).join("") || "<li>None identified</li>"}</ul>
