@@ -51,6 +51,9 @@ const PROFILES: Record<Vertical, ContextFactor[]> = {
     { key: "hospital",   label: "hospital",                query: "hospital",                          feeds: "demand", sign: 1,  goodMeters: 700,  weight: 0.5, icon: "🏥", kind: "Footfall" },
     { key: "college",    label: "college / university",    query: "college OR university",             feeds: "demand", sign: 1,  goodMeters: 700,  weight: 0.5, icon: "🎓", kind: "Footfall" },
     { key: "fuel",       label: "petrol pump / busy road", query: "petrol pump",                       feeds: "access", sign: 1,  goodMeters: 400,  weight: 0.4, icon: "⛽", kind: "Access" },
+    { key: "atm",        label: "ATM",                     query: "atm",                               feeds: "access", sign: 1,  goodMeters: 300,  weight: 0.3, icon: "🏧", kind: "Finance" },
+    { key: "restaurant", label: "restaurant / cafe",       query: "restaurant OR cafe",                feeds: "demand", sign: 1,  goodMeters: 400,  weight: 0.4, icon: "🍔", kind: "Footfall" },
+    { key: "office",     label: "office / business park",  query: "office complex OR corporate park",  feeds: "demand", sign: 1,  goodMeters: 600,  weight: 0.6, icon: "🏢", kind: "Commercial" },
   ],
 
   // Bank branches: affluence + commercial/office density + parking, less pure footfall.
@@ -60,6 +63,8 @@ const PROFILES: Record<Vertical, ContextFactor[]> = {
     { key: "mall",       label: "shopping mall",           query: "shopping mall",                     feeds: "demand", sign: 1,  goodMeters: 800,  weight: 0.7, icon: "🏬", kind: "Commercial" },
     { key: "hospital",   label: "hospital",                query: "hospital",                          feeds: "demand", sign: 1,  goodMeters: 900,  weight: 0.4, icon: "🏥", kind: "Anchor" },
     { key: "parking",    label: "parking",                 query: "parking",                           feeds: "access", sign: 1,  goodMeters: 300,  weight: 0.5, icon: "🅿️", kind: "Access" },
+    { key: "atm",        label: "ATM",                     query: "atm",                               feeds: "access", sign: 1,  goodMeters: 400,  weight: 0.3, icon: "🏧", kind: "Finance" },
+    { key: "restaurant", label: "restaurant / cafe",       query: "restaurant OR cafe",                feeds: "demand", sign: 1,  goodMeters: 500,  weight: 0.4, icon: "🍔", kind: "Footfall" },
   ],
 
   // Grocery / retail: residential demand + family footfall (schools) + transit.
@@ -69,6 +74,8 @@ const PROFILES: Record<Vertical, ContextFactor[]> = {
     { key: "metro",      label: "metro / transit station", query: "metro station OR bus stop",         feeds: "access", sign: 1,  goodMeters: 500,  weight: 0.7, icon: "🚇", kind: "Transit" },
     { key: "mall",       label: "shopping mall / market",  query: "shopping mall OR market",           feeds: "demand", sign: 1,  goodMeters: 800,  weight: 0.6, icon: "🏬", kind: "Footfall" },
     { key: "college",    label: "college / university",    query: "college OR university",             feeds: "demand", sign: 1,  goodMeters: 700,  weight: 0.5, icon: "🎓", kind: "Demand" },
+    { key: "atm",        label: "ATM",                     query: "atm",                               feeds: "access", sign: 1,  goodMeters: 400,  weight: 0.3, icon: "🏧", kind: "Finance" },
+    { key: "restaurant", label: "restaurant / cafe",       query: "restaurant OR cafe",                feeds: "demand", sign: 1,  goodMeters: 500,  weight: 0.5, icon: "🍔", kind: "Footfall" },
   ],
 
   // Warehouse / dark store: logistics arteries. Near ports/railheads/airports/
@@ -81,6 +88,7 @@ const PROFILES: Record<Vertical, ContextFactor[]> = {
     { key: "port",       label: "port / harbour / ICD",        query: "port OR harbour OR inland container depot", feeds: "access", sign: 1, goodMeters: 10000, weight: 0.6, icon: "🚢", kind: "Logistics" },
     { key: "industrial", label: "industrial / logistics park", query: "industrial area OR logistics park OR warehouse", feeds: "access", sign: 1, goodMeters: 1500, weight: 0.8, icon: "🏭", kind: "Logistics" },
     { key: "fuel",       label: "fuel / truck stop",           query: "petrol pump OR truck stop",      feeds: "access", sign: 1,  goodMeters: 1200, weight: 0.3, icon: "⛽", kind: "Logistics" },
+    { key: "supermarket",label: "supermarket / retail",        query: "supermarket OR grocery store",   feeds: "demand", sign: 1,  goodMeters: 2000, weight: 0.4, icon: "🛒", kind: "Retail" },
   ],
 };
 
