@@ -31,6 +31,11 @@ In ~30 seconds you get:
 ## What's new (latest iteration)
 
 - **Latest enhancements (June 2026)**:
+  - **Interactive Recommended Markers (1-5)**: Numbered blue markers (`1` to `5`) corresponding to the top 5 recommended locations are plotted on the map. Features custom HTML overlay labels and full synchronization (clicking highlights H3 polygons, glides map, displays hex panel, and expands/scrolls sidebar cards).
+  - **Premium Tooltip Popovers**: Replaced browser-default `title` tooltips on `+N more` chips with instant-hover / click-toggle custom `.more-tooltip` popovers, listing additional locations cleanly as bullet points.
+  - **Pre-Analysis Welcome Placeholder**: Added a clean dashed welcome card in the sidebar indicating *"Please search for a location first to see suitability assessment"*, toggling visibility automatically based on active analysis states.
+  - **Geocoding Precision & CSV Import Persistence**: Constructed full-address queries from all import columns (Street, Area, City, Pincode) to ensure highly accurate coordinate plotting. Preserved imported locations dynamically on subsequent analysis runs and PDF snapshots.
+  - **Enriched Maps Search Trail**: Expanded context layers to search for ATMs (🏧), Restaurants (🍔), Offices (🏢), and Supermarkets (🛒) for richer suitability grading.
   - **Layout Stability**: Replaced the map label toggle hide logic with an `.invisible` state to prevent buttons from shifting positions when map views change.
   - **Standard Map View**: Renamed the "Terrain" map option to "Standard" in the header to simplify map types for business users.
   - **Premium Loading Animation**: Redesigned the Analyze button shimmer loading effect into a full-height diagonal sweep.

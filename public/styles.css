@@ -424,8 +424,56 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .gmaps-link:hover { text-decoration: underline; color: var(--ganit-orange); }
 
 /* "+N more" chip + inline maps link in nearby lists */
-.more-chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px;
-  border-radius: 999px; background: var(--panel-2); color: var(--ganit-blue); cursor: help; }
+.more-chip {
+  position: relative;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--ganit-blue);
+  cursor: pointer;
+  user-select: none;
+}
+.more-tooltip {
+  visibility: hidden;
+  position: absolute;
+  bottom: 130%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 250px;
+  background-color: #1a1d2b;
+  color: #fff;
+  text-align: left;
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  font-size: 11px;
+  line-height: 1.45;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: none;
+  font-weight: 500;
+  white-space: normal;
+}
+.more-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: #1a1d2b transparent transparent transparent;
+}
+.more-chip:hover .more-tooltip,
+.more-chip.active .more-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}
 .nearby-row { align-items: flex-start; gap: 12px; }
 .nearby-row .label { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .nearby-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
@@ -612,6 +660,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 }
 .marker-label.competitor { background: #fee; color: var(--bad); border-color: var(--bad); }
 .marker-label.own        { background: #efe; color: var(--good); border-color: var(--good); }
+.marker-label.recommended { background: #eef1ff; color: var(--ganit-blue); border-color: var(--ganit-blue); }
 
 /* Progress panel */
 .progress-panel {
@@ -747,3 +796,30 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .src-row strong { color: var(--text); }
 .src-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
 .info-foot { margin-top: 20px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; }
+
+/* Welcome Placeholder */
+.welcome-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 50px 24px;
+  background: var(--bg-2);
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  margin-top: 20px;
+  gap: 12px;
+}
+.welcome-placeholder .uil {
+  font-size: 36px;
+  color: var(--ganit-blue);
+  opacity: 0.65;
+}
+.welcome-placeholder span {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-2);
+}

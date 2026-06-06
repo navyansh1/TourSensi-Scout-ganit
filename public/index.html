@@ -96,6 +96,10 @@
 
       <div id="status" class="status"></div>
       <div id="progressPanel" class="progress-panel hidden"></div>
+      <div id="welcomePlaceholder" class="welcome-placeholder">
+        <i class="uil uil-search-alt"></i>
+        <span>Please search for a location first to see suitability assessment</span>
+      </div>
 
       <section id="summary" class="hidden">
         <!-- Headline stat card -->
@@ -145,6 +149,7 @@
       <div class="legend-row"><div class="swatch" id="swatch-avoid" style="background:#dc2626"></div>Avoid (&lt;35)</div>
       <hr/>
       <div class="legend-title">Map pins</div>
+      <div class="legend-row dot"><div class="swatch" style="background:var(--ganit-blue)"></div>Recommended site (#1-5)</div>
       <div class="legend-row dot"><div class="swatch" style="background:#22c55e"></div>Your existing site</div>
       <div class="legend-row dot"><div class="swatch" style="background:#dc2626"></div>Competitor</div>
       <!-- "Property for sale" pin legend removed per request. Kept for restore:

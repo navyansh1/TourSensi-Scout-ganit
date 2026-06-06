@@ -246,6 +246,11 @@ function bindUI() {
     };
   }
   updateLegendSwatches();
+
+  // Dismiss all active tooltips when clicking anywhere else
+  document.addEventListener("click", () => {
+    document.querySelectorAll(".more-chip.active").forEach(el => el.classList.remove("active"));
+  });
 }
 
 // ---------- analyze (streaming) ----------
@@ -257,6 +262,7 @@ async function onAnalyze() {
 
   clearMap();
   document.getElementById("summary").classList.add("hidden");
+  document.getElementById("welcomePlaceholder")?.classList.add("hidden");
   document.getElementById("legend").classList.add("hidden");
   document.getElementById("execBtn")?.classList.add("hidden");
   setAnalyzeBusy(true);
@@ -295,6 +301,7 @@ async function onAnalyze() {
     console.error(e);
     setStatus(`Error: ${e.message}`, "error");
     document.getElementById("progressPanel").classList.add("hidden");
+    document.getElementById("welcomePlaceholder")?.classList.remove("hidden");
     setAnalyzeBusy(false);
   }
 }
@@ -425,6 +432,11 @@ function renderResult(data) {
   // Pins — your sites + competitors are ALWAYS shown by default.
   for (const p of data.competitorsList) addCompetitorPin(p, "#dc2626", "Competitor");
   for (const p of data.ownList)         addCompetitorPin(p, "#22c55e", "Your site", "own");
+
+  // Numbered Recommended Sites (#1-5) on the map
+  (data.recommendations || []).forEach((r, idx) => {
+    addRecommendedPin(r, idx, data);
+  });
 
   // Context overlays (metro/mall/school/…) are kept hidden by default and only
   // shown when the user ticks them in the "Show on map" dropdown.
@@ -742,6 +754,87 @@ function addImportedPin(p, color, label) {
   importedMarkers.push(label2);
 }
 
+function addRecommendedPin(r, index, data) {
+  const m = new google.maps.Marker({
+    position: { lat: r.lat, lng: r.lng },
+    map,
+    title: `Recommended Site #${index + 1}: Score ${r.final}/100`,
+    optimized: true,
+    label: {
+      text: String(index + 1),
+      color: "#ffffff",
+      fontWeight: "800",
+      fontSize: "11px",
+    },
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 11,
+      fillColor: "#1a00d9", // Ganit Blue
+      fillOpacity: 1,
+      strokeWeight: 2,
+      strokeColor: "#ffffff",
+    },
+  });
+
+  m.addListener("click", () => {
+    const h = data.hexes.find(x => x.hex === r.hex);
+    if (h) {
+      glideToZone(h);
+      highlightHexOnMap(h);
+      showHexPanel(h, data);
+    }
+
+    // Expand the corresponding card in the sidebar
+    const cards = document.querySelectorAll("#recList li.tagged-card");
+    cards.forEach((li, idx) => {
+      if (idx === index) {
+        li.classList.add("expanded");
+        const details = li.querySelector(".rec-details-panel");
+        if (details) details.classList.remove("hidden");
+        const chevron = li.querySelector(".rec-card-chevron");
+        if (chevron) chevron.textContent = "Hide Details ▴";
+        li.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } else {
+        li.classList.remove("expanded");
+        const details = li.querySelector(".rec-details-panel");
+        if (details) details.classList.add("hidden");
+        const chevron = li.querySelector(".rec-card-chevron");
+        if (chevron) chevron.textContent = "View Details ▾";
+      }
+    });
+
+    const landmark = r.signals.nearest[0];
+    const locDesc = `Near ${landmark ? escapeHtml(landmark.name) : 'Center'}`;
+    const content = `
+      <div style="font-family: 'Inter', sans-serif; padding: 6px; min-width: 160px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--ganit-blue); text-transform: uppercase; margin-bottom: 2px;">
+          ⭐ Recommended Site #${index + 1}
+        </div>
+        <div style="font-size: 13px; font-weight: 700; color: var(--text);">${escapeHtml(locDesc)}</div>
+        <div style="font-size: 12px; font-weight: 600; color: ${scoreColor(r.final)}; margin-top: 4px;">
+          Score: ${r.final}/100
+        </div>
+        <div style="font-size: 10px; color: var(--muted); margin-top: 4px; font-family: monospace;">
+          ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}
+        </div>
+        <a class="gmaps-link" href="${gmapsUrl(r)}" target="_blank" rel="noopener">View on Google Maps ↗</a>
+      </div>
+    `;
+    infoWindow.setContent(content);
+    infoWindow.open(map, m);
+  });
+
+  markers.push(m);
+
+  // Overlay HTML label
+  const label = makeHTMLLabel(
+    { lat: r.lat, lng: r.lng },
+    `Site #${index + 1}`,
+    "marker-label recommended"
+  );
+  markers.push(label);
+}
+
 // Create an overlay pin + label but DON'T attach to the map yet. The layer
 // control attaches/detaches them when the user toggles that amenity type.
 function makeOverlayPin(o) {
@@ -882,7 +975,8 @@ function showHexPanel(h, data) {
     ${h.signals.nearest.map(n => {
       const dist = (m) => m >= 1000 ? (m/1000).toFixed(1) + " km" : m + " m";
       const moreCount = (n.others || []).length;
-      const moreChip = moreCount ? ` <span class="more-chip" title="${(n.others).map(o => `${escapeHtml(o.name)} (${dist(o.meters)})`).join(', ')}">+${moreCount}</span>` : "";
+      const listText = moreCount ? (n.others).map(o => `• ${escapeHtml(o.name)} (${dist(o.meters)})`).join('<br/>') : "";
+      const moreChip = moreCount ? ` <span class="more-chip" onclick="toggleMoreTooltip(event, this)">+${moreCount}<span class="more-tooltip">${listText}</span></span>` : "";
       const link = `<a class="gmaps-inline" href="${gmapsUrl({ name: n.name, id: n.id })}" target="_blank" rel="noopener" title="Open ${escapeHtml(n.name)} on Google Maps">${escapeHtml(n.name)} ↗</a>`;
       return `
       <div class="score-row nearby-row">
@@ -1126,8 +1220,9 @@ function renderExpandedDetails(r, data) {
   r.signals.nearest.forEach(n => {
     const dist = (m) => m >= 1000 ? (m/1000).toFixed(1) + " km" : m + " m";
     const moreCount = (n.others || []).length;
+    const listText = moreCount ? (n.others).map(o => `• ${escapeHtml(o.name)} (${dist(o.meters)})`).join('<br/>') : "";
     const moreChip = moreCount
-      ? ` <span class="more-chip" title="${(n.others).map(o => `${escapeHtml(o.name)} (${dist(o.meters)})`).join(', ')}">+${moreCount} more</span>`
+      ? ` <span class="more-chip" onclick="toggleMoreTooltip(event, this)">+${moreCount} more<span class="more-tooltip">${listText}</span></span>`
       : "";
     bullets.push(`
       <div class="rec-detail-bullet">
@@ -1676,6 +1771,15 @@ function gmapsUrl(p) {
   if (p.id) return `https://www.google.com/maps/search/?api=1&query=${q}&query_place_id=${encodeURIComponent(p.id)}`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${p.lat},${p.lng}`)}`;
 }
+
+window.toggleMoreTooltip = (event, elem) => {
+  event.stopPropagation();
+  const wasActive = elem.classList.contains("active");
+  document.querySelectorAll(".more-chip.active").forEach(el => el.classList.remove("active"));
+  if (!wasActive) {
+    elem.classList.add("active");
+  }
+};
 function brandMapStyle() {
   return [
     { elementType: "geometry", stylers: [{ color: "#f6f7fb" }] },
