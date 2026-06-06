@@ -18,6 +18,7 @@ import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, type Vertical } from "./co
 import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
+import { bboxPopulation, densityToDemand } from "./worldpop";
 import { runGrowthAgent } from "./agent";
 import { getRealEstateSignals } from "./realestate";
 import { scoreHexes, topRecommendations, placeQuality } from "./scoring";
@@ -102,7 +103,7 @@ router.post("/analyze-stream", async (req, res) => {
     send("progress", { step: "overlay", label: `🗺️ ${contextPois.length} nearby context POIs mapped`, done: true });
     const contextBrief = areaContextBrief(vertical, contextPois, { lat: geo.lat, lng: geo.lng });
 
-    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, agent] = await Promise.allSettled([
+    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, population, agent] = await Promise.allSettled([
       competitorsInArea({ category: placeType, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000 })
         .then(r => { send("progress", { step: "competitors", label: `🔴 ${r.length} competitor POIs found`, done: true }); return r; }),
       (company
@@ -118,6 +119,7 @@ router.post("/analyze-stream", async (req, res) => {
       geo.pin ? pinInfo(geo.pin).catch(() => null) : Promise.resolve(null),
       getRealEstateSignals({ city: geo.city, area: geo.area })
         .then(r => { send("progress", { step: "realestate", label: `🏠 ${r.sampleSize} listings, ${r.listings?.length ?? 0} sampled`, done: true }); return r; }),
+      bboxPopulation(geo.bbox).catch(() => null),
       runGrowthAgent({ area: geo.area, city: geo.city, contextBrief })
         .then(r => { send("progress", { step: "agent", label: `🤖 Growth ${r.growthScore}/100 · ${r.trail.length} searches · 4 quadrants`, done: true }); return r; }),
     ]);
@@ -129,6 +131,7 @@ router.post("/analyze-stream", async (req, res) => {
     const wikiInfo = wiki.status === "fulfilled" ? wiki.value : null;
     const pinInfoData = pinData.status === "fulfilled" ? pinData.value : null;
     const reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
+    const popData = population.status === "fulfilled" ? population.value : null;
     const fallbackAgent = {
       area: geo.area, city: geo.city, growthScore: 50,
       reasoning: "(agent unavailable)", trail: [] as any[],
@@ -150,6 +153,7 @@ router.post("/analyze-stream", async (req, res) => {
       contextPois,
       realEstate: reSignals, growthScore: agentResult.growthScore,
       quadrantScores: agentResult.quadrantScores,
+      populationDemand: popData ? densityToDemand(popData.densityPerKm2) : null,
     });
     const recs = topRecommendations(hexes, 5);
     send("progress", { step: "score", label: `📊 Scored ${hexes.length} hexes, picked top ${recs.length}`, done: true });
@@ -180,6 +184,7 @@ router.post("/analyze-stream", async (req, res) => {
       overlay: overlayList,
       wiki: wikiInfo,
       pin: pinInfoData,
+      population: popData,
       agent: {
         trailId,
         growthScore: agentResult.growthScore,

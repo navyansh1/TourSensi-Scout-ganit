@@ -28,6 +28,18 @@ In ~30 seconds you get:
 
 ---
 
+## What's new (latest iteration)
+
+- **Per-zone AI verdict** — click any hex → an on-demand, Google-grounded **OPEN / CONSIDER / AVOID** call with short, use-case-specific bullets (bold keywords), the supporting facts, and citations. Cached per zone (`zoneInsight.ts`, `/zone-insight`).
+- **Real population (WorldPop)** — free, current, 100 m-grid India population is now the primary demand signal, replacing the POI-density-only proxy (`worldpop.ts`).
+- **Honest, non-cheerleader summary** — the exec card states the market reality (competitor/own-site counts), is forced to **AVOID** when the whole area is weak and **CAUTION** when saturated, and suggests **alternative localities** to expand into instead (`applyHonesty` in `index.ts`).
+- **Less-generous scoring** — empty land scores red, green is earned; validated against multiple cities. Google Places **ratings / review counts / permanently-closed** share feed demand as a footfall / dying-high-street signal.
+- **Use-case-aware nearby context** — ATM → footfall+transit+safety; branch → affluence+offices; retail → schools+residential; warehouse → highways/rail/air/ports. Honest distances (never claims a far-off port is "nearby" in a landlocked city). "+N more" when several of a type are close.
+- **Maps everywhere** — every marker (competitor, your site, mall/metro/school…) has a **View on Google Maps** link.
+- **UX** — logo-matched brand colors, draggable sidebar, centered top-bar map controls (Map/Satellite/Terrain/Labels/zoom — native on-map controls hidden so the zone panel never covers them), settings panel with distinct/soft heatmap palettes, **ℹ️ About** modal listing every data source, auto-ticking progress checklist, smooth zone-to-zone glide, soft "be more specific" search nudge. Wikipedia fetch disabled (kept commented).
+
+---
+
 ## Architecture
 
 ```
@@ -83,12 +95,13 @@ In ~30 seconds you get:
 | Category | Source | Cost | Notes |
 |---|---|---|---|
 | **Geocoding** | Google Geocoding API + Reverse Geocoding | 10K free/mo + $5 per 1K | Reverse geocode fills PIN when neighborhood lookup didn't include it |
-| **Competitor POIs** | Google Places API (New) Text Search | 5K free/mo + $32 per 1K | 20-result `searchText` per analyze call |
+| **Competitor POIs** | Google Places API (New) Text Search | 5K free/mo + $32 per 1K | 20-result `searchText` per analyze call. Now also captures `rating`, `userRatingCount`, `priceLevel`, `businessStatus` → fed into scoring as a footfall / "dying high-street" quality signal (`placeQuality` in `scoring.ts`). |
 | **Your brand POIs** | Same — keyword filter per `companies.ts` catalog | same | E.g. `"HDFC Bank", "HDFC ATM"` |
+| **Population (demand)** | **WorldPop** stats API (`api.worldpop.org`) | **Free, no key** | Real, current (2020, 100 m grid) gridded population for the analysis bbox. Async submit→poll. Density → primary demand signal (`worldpop.ts`). Replaces the dropped 2011-Census idea — current, not 14-yr-old, and spatial. |
 | **Real estate** | Apify `easyapi/99acres-com-scraper` | ~$0.25 per 1K results | Scraped on-demand, cached in Firestore per `city_area` for 7 days |
 | **Property listings shown in UI** | Same 99acres scrape | (above) | Top 10 listings per area surfaced to hex panel |
 | **PIN/district** | api.postalpincode.in (free, India Post) | Free | + Google Reverse Geocoding fallback when geocode didn't return postal_code |
-| **Geo-context paragraph** | Wikipedia REST `/page/summary` | Free | Requires non-default User-Agent header. 4-variant title fallback chain |
+| **Geo-context paragraph** | ~~Wikipedia REST `/page/summary`~~ | Free | **Currently disabled** (commented in `index.ts`, kept for easy re-enable). |
 | **Background POIs** | OpenStreetMap Overpass | Free, 10K req/day/IP | Used for OSM-based demand backdrop |
 | **Nearby context** | Google Places (New) Text Search, **vertical-specific** | Pro SKU | Metro/road/anchor amenities chosen per use-case (ATM→footfall+transit, warehouse→ports/railheads/highways, retail→schools+residential). Feeds scoring (access/demand), per-hex proximity ("320 m from a metro"), AND the AI narrative. Replaces the old broken OSM overlay. See `context.ts`. |
 | **AI growth signals** | Vertex AI Gemini 2.5 Flash + `googleSearch` | Blaze billing | 8 area queries + 4 quadrant queries + 1 synthesis = 13 calls per analyze |
@@ -119,12 +132,14 @@ TourSensi Scout/
         ├── places.ts              ← Google Places (New) text search wrappers
         ├── osm.ts                 ← Overpass POI fetch (background demand layer)
         ├── context.ts             ← vertical-specific nearby amenities (Google Places) + per-hex proximity + AI brief
+        ├── worldpop.ts            ← WorldPop free population API (async submit→poll) → demand signal
+        ├── zoneInsight.ts         ← on-demand per-zone AI verdict (OPEN/CONSIDER/AVOID), cached in Firestore
         ├── companies.ts           ← BFSI + FMCG company catalog (HDFC, DMart, Zepto…)
         ├── realestate.ts          ← Apify 99acres caller + Firestore cache + signal compute
-        ├── wikipedia.ts           ← REST summary fetcher with title-fallback chain
+        ├── wikipedia.ts           ← REST summary fetcher (currently disabled in index.ts)
         ├── census.ts              ← India Post PIN lookup
-        ├── agent.ts               ← Vertex AI: 8 grounded queries + 4 quadrants + MBA synthesis
-        ├── scoring.ts             ← H3 hex scoring + tagged recommendation picker
+        ├── agent.ts               ← Vertex AI: 8 grounded queries + 4 quadrants + honest MBA synthesis
+        ├── scoring.ts             ← H3 hex scoring (pop/quality/context aware) + tagged recommendation picker
         └── importLocations.ts     ← CSV/Excel/JSON parser + Gemini column auto-mapper
 ```
 
@@ -200,7 +215,8 @@ All endpoints under `https://api-bvb33x56gq-el.a.run.app` and also proxied at `/
 | GET | `/config` | — | `{mapsBrowserKey, runUrl}` |
 | GET | `/companies` | — | `{companies: Company[]}` — BFSI + FMCG catalog |
 | POST | `/analyze` | `{location, vertical, companyId?}` | Single JSON blob with all results (use only for fast areas — hits Firebase Hosting's 60s edge timeout) |
-| POST | `/analyze-stream` | same body | **SSE stream**: `progress` events per step, final `result` event. **Used by the frontend.** |
+| POST | `/analyze-stream` | same body | **SSE stream**: `progress` + `notice` (broad-location nudge) events, final `result` event. **Used by the frontend.** |
+| POST | `/zone-insight` | `{vertical, area, city, lat, lng, final, demand, …}` (a clicked hex's facts) | On-demand, grounded AI verdict for ONE zone: `{verdict: OPEN\|CONSIDER\|AVOID, headline, facts[], reasoning[], bottomLine, sources[]}`. Cached in Firestore per zone. |
 | POST | `/import?name=foo.csv` | raw bytes (octet-stream) | Gemini-mapped canonical locations |
 | GET | `/agent-trail/:id` | — | Saved trail by ID |
 

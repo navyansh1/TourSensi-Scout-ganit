@@ -19,21 +19,22 @@
         <div class="brand-tag">AI-powered site selection for BFSI &amp; FMCG</div>
       </div>
     </div>
-    <div class="header-right">
-      <!-- Custom map controls that drive the Google map directly, so nothing
-           sits on the map surface where the zone panel could cover it. -->
-      <div class="map-controls" id="mapControls">
-        <div class="mc-group" id="mapTypeGroup" role="group" aria-label="Map view">
-          <button class="mc-btn active" data-maptype="roadmap" title="Map view">Map</button>
-          <button class="mc-btn" data-maptype="satellite" title="Satellite view">Satellite</button>
-          <button class="mc-btn" data-maptype="terrain" title="Terrain view">Terrain</button>
-        </div>
-        <button class="mc-btn mc-toggle" id="labelsToggle" title="Toggle place labels">🏷️ Labels</button>
-        <div class="mc-group">
-          <button class="mc-btn mc-zoom" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">−</button>
-          <button class="mc-btn mc-zoom" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">+</button>
-        </div>
+    <!-- Custom map controls, centered in the top bar, that drive the Google map
+         directly so nothing sits on the map surface where the panel could cover it. -->
+    <div class="map-controls" id="mapControls">
+      <div class="mc-group" id="mapTypeGroup" role="group" aria-label="Map view">
+        <button class="mc-btn active" data-maptype="roadmap" title="Map view">Map</button>
+        <button class="mc-btn" data-maptype="satellite" title="Satellite view">Satellite</button>
+        <button class="mc-btn" data-maptype="terrain" title="Terrain view">Terrain</button>
       </div>
+      <button class="mc-btn mc-toggle" id="labelsToggle" title="Toggle place labels">🏷️ Labels</button>
+      <div class="mc-group">
+        <button class="mc-btn mc-zoom" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">−</button>
+        <button class="mc-btn mc-zoom" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+
+    <div class="header-right">
       <button id="execBtn" class="primary ghost-primary hidden">📋 View Executive Summary</button>
       <button id="importBtn" class="ghost">📂 Import my locations</button>
       <button id="infoBtn" class="ghost icon-btn" title="About this tool & data sources" aria-label="About">ℹ️</button>
@@ -161,9 +162,10 @@
 
       <h3 class="info-h">Where the data comes from</h3>
       <div class="info-sources">
-        <div class="src-row"><span class="src-dot" style="background:#1a00d9"></span><div><strong>Google Maps Platform</strong> — Geocoding, Places (New): competitors, your sites, and nearby context (metro, malls, schools, highways, ports). Prices, ratings &amp; business status where available.</div></div>
-        <div class="src-row"><span class="src-dot" style="background:#fe6e06"></span><div><strong>Google Search via Gemini 2.5</strong> — grounded research on metro projects, real-estate launches, SEZs, infrastructure &amp; recent news, with citations.</div></div>
-        <div class="src-row"><span class="src-dot" style="background:#16a34a"></span><div><strong>99acres (via Apify)</strong> — live property listings &amp; ₹/sqft as a local affluence and supply signal.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#1a00d9"></span><div><strong>Google Maps Platform</strong> — Geocoding &amp; Places (New): competitors, your sites, and use-case-specific nearby context (metro, malls, schools, highways, ports). Includes ratings, review counts, price level &amp; open/closed status — used as a live footfall &amp; "dying high-street" signal.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#16a34a"></span><div><strong>WorldPop population</strong> — free, current (2020, 100&nbsp;m grid) gridded population for India. Gives the <em>real</em> people-count &amp; density of the searched area as the primary demand signal.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#fe6e06"></span><div><strong>Google Search via Gemini 2.5</strong> — grounded research on metro projects, real-estate launches, SEZs, infrastructure &amp; recent news, with clickable citations. Also powers the per-zone "open here / avoid" verdict.</div></div>
+        <div class="src-row"><span class="src-dot" style="background:#8b5cf6"></span><div><strong>99acres (via Apify)</strong> — live property listings &amp; ₹/sqft as a local affluence and supply signal.</div></div>
         <div class="src-row"><span class="src-dot" style="background:#6b7390"></span><div><strong>India Post</strong> — PIN code &amp; district lookup.</div></div>
         <div class="src-row"><span class="src-dot" style="background:#0ea5e9"></span><div><strong>OpenStreetMap</strong> — background density of local places as a demand backdrop.</div></div>
       </div>

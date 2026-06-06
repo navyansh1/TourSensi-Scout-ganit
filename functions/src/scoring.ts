@@ -54,6 +54,9 @@ export interface ScoreInputs {
   realEstate: RealEstateSignals | null;
   growthScore: number;
   quadrantScores: QuadrantScore[];
+  // 0..100 demand contribution derived from real WorldPop population density
+  // for the area (applied area-wide). null when unavailable.
+  populationDemand?: number | null;
 }
 
 export function hexesInBbox(bbox: { south: number; west: number; north: number; east: number }): string[] {
@@ -190,17 +193,24 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
     // empty hex with no signals should score LOW, not float at 50.
     const osmDemand = norm(osmAround, 6);             // 0..100, needs ~6 POIs to read "average"
     const hasAnyDemandSignal = osmAround > 0 || ctx.demandBoost > 2;
+    // Real population density (WorldPop) is the strongest available demand signal.
+    // When present it carries the most weight; otherwise we lean on POI fabric.
+    const pop = inputs.populationDemand;
+    const hasPop = typeof pop === "number" && pop > 0;
     let demand = Math.round(
       Math.max(0, Math.min(100,
-        0.40 * osmDemand +
-        0.25 * wealth +
-        0.35 * (50 + ctx.demandBoost) +   // amenity boost centered on 50, +/- up to 40
+        (hasPop
+          ? 0.42 * (pop as number) + 0.20 * osmDemand
+          : 0.40 * osmDemand) +
+        0.18 * wealth +
+        0.25 * (50 + ctx.demandBoost) +   // amenity boost centered on 50, +/- up to 40
         distBump * 0.4 +
         (noise * 4)
       )),
     );
-    // Hard reality check: nothing nearby = genuinely weak demand.
-    if (!hasAnyDemandSignal) demand = Math.round(demand * 0.45);
+    // Hard reality check: nothing nearby = genuinely weak demand. (Skipped when we
+    // have a real population reading, which is more reliable than POI presence.)
+    if (!hasAnyDemandSignal && !hasPop) demand = Math.round(demand * 0.45);
     // Place-quality modifier: thriving, well-reviewed commerce lifts demand;
     // a high closed-business share drags it down. Capped to a gentle ±12.
     demand = Math.round(Math.max(0, Math.min(100, demand + quality.demandDelta)));

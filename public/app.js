@@ -529,7 +529,7 @@ function renderContext(data) {
     <div class="context-meta">
       ${pin?.pin ? `<div class="cm-item"><strong>PIN</strong> ${pin.pin}</div>` : ""}
       ${pin?.district ? `<div class="cm-item"><strong>District</strong> ${escapeHtml(pin.district)}</div>` : ""}
-      ${w?.population ? `<div class="cm-item"><strong>Population</strong> ~${w.population.toLocaleString("en-IN")}</div>` : ""}
+      ${data.population?.totalPopulation ? `<div class="cm-item"><strong>Population</strong> ~${data.population.totalPopulation.toLocaleString("en-IN")} (${data.population.densityPerKm2.toLocaleString("en-IN")}/km²)</div>` : (w?.population ? `<div class="cm-item"><strong>Population</strong> ~${w.population.toLocaleString("en-IN")}</div>` : "")}
       ${re?.medianPricePerSqft ? `<div class="cm-item"><strong>Median ₹/sqft</strong> ₹${Math.round(re.medianPricePerSqft).toLocaleString("en-IN")}</div>` : ""}
       ${data.counts?.overlay ? `<div class="cm-item"><strong>${data.counts.overlay}</strong> nearby landmarks</div>` : ""}
     </div>`;
@@ -748,7 +748,15 @@ function showHexPanel(h, data) {
     <div style="margin-top:12px; font-size:11px; color:var(--muted); font-family: ui-monospace, monospace">
       Coordinates: ${h.lat.toFixed(5)}, ${h.lng.toFixed(5)}
     </div>`;
+  // Animate only on a fresh open (hidden → visible). Switching between zones
+  // while the panel is already open should NOT replay the slide-in.
+  const wasHidden = panel.classList.contains("hidden");
   panel.classList.remove("hidden");
+  if (wasHidden) {
+    panel.classList.remove("just-opened");
+    void panel.offsetWidth;            // restart the animation cleanly
+    panel.classList.add("just-opened");
+  }
   panel.scrollTop = 0;
   fetchZoneInsight(h, data);
 }
