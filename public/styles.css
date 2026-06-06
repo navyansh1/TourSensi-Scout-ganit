@@ -136,7 +136,7 @@ button .uil,
 .primary.analyzing::after {
   content: ""; position: absolute; left: -50%; top: 0;
   width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  background: linear-gradient(90deg, transparent, rgba(254, 110, 6, 0.9), transparent);
   animation: analyze-scan 1.3s ease-in-out infinite;
 }
 @keyframes analyze-scan {
