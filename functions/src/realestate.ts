@@ -27,6 +27,8 @@ export interface RealEstateSignals {
   underConstructionShare: number;   // 0..1
   listings: PropertyListing[];      // up to 10 sample listings to show in the UI
   fetchedAt: number;
+  aiEstimated?: boolean;            // true when price came from the AI fallback, not a scrape
+  aiNote?: string;                  // short AI note about the local property market
 }
 
 function client() {

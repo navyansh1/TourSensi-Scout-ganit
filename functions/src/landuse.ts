@@ -1,14 +1,23 @@
-// No-build land-use detection: railways, airports, water bodies (rivers/lakes)
-// and large forests/parks. A site obviously cannot open on a runway, a railway
-// track, or in the middle of a river, so any hex whose centre falls inside one
-// of these features is flagged. We PENALISE such hexes (floor their score) in
-// the scoring engine rather than deleting them — OSM polygons aren't perfect, so
-// penalising avoids wrongly erasing a valid plot next to (but not on) a feature,
-// while still guaranteeing these zones never get recommended.
+// Land-use detection from OpenStreetMap, used to keep the heatmap honest about
+// where a site physically cannot go.
 //
-// Source: OpenStreetMap Overpass. `out geom;` returns each way's polygon
-// coordinates inline, so we can run a local point-in-polygon test per hex with
-// zero extra API calls. Fails open (empty set) on any error.
+// Two outcomes, because they want different treatment:
+//
+//  1. WATER (sea, rivers, lakes, canals, backwaters, lagoons) -> EXCLUDE the
+//     hex entirely. It must not be drawn at all — a hex floating on a backwater
+//     looks broken. OSM is the reliable source here: coastal water and lagoons
+//     often read a POSITIVE elevation in Google's model (the Chennai backwaters
+//     read +15..+25 m), so the elevation-only ocean check misses them. OSM knows
+//     it is water regardless.
+//
+//  2. NO-BUILD LAND (railway, airport/runway, large forest) -> PENALISE the hex
+//     (floor its score so it reads red and is never recommended) but keep it on
+//     the map. OSM polygons for these can be imperfect, so flooring is the safe
+//     call vs. deleting a possibly-valid adjacent plot.
+//
+// One Overpass query with `out geom;` returns polygon coordinates inline, so the
+// point-in-polygon test runs locally with zero extra per-hex API calls. Fails
+// open (empty sets) on any error.
 
 import axios from "axios";
 
@@ -20,53 +29,72 @@ const OVERPASS_HEADERS = {
 
 type Ring = { lat: number; lng: number }[];
 
-// Overpass query for no-build features within a bbox. We pull ways (and the
-// outer ring of multipolygon relations) for each category and ask for geometry.
+export interface LandUseResult {
+  waterHexes: Set<string>;    // hexes on water -> exclude/remove
+  noBuildHexes: Set<string>;  // hexes on railway/airport/forest -> penalise
+}
+
+// Overpass query. Water features are tagged so we can route them to "exclude";
+// everything else routes to "penalise".
 function buildQuery(bbox: { south: number; west: number; north: number; east: number }): string {
   const b = `(${bbox.south},${bbox.west},${bbox.north},${bbox.east})`;
   return `[out:json][timeout:25];
 (
+  way["natural"="water"]${b};
+  way["waterway"="riverbank"]${b};
+  way["landuse"="reservoir"]${b};
+  way["landuse"="basin"]${b};
+  relation["natural"="water"]${b};
   way["aeroway"="aerodrome"]${b};
   way["aeroway"="runway"]${b};
   way["aeroway"="taxiway"]${b};
   way["landuse"="railway"]${b};
-  way["natural"="water"]${b};
-  way["waterway"="riverbank"]${b};
   way["landuse"="forest"]${b};
   way["natural"="wood"]${b};
-  relation["natural"="water"]${b};
   relation["aeroway"="aerodrome"]${b};
 );
 out geom;`;
 }
 
-// Fetch all no-build polygons (as coordinate rings) within the bbox.
-async function fetchNoBuildRings(bbox: { south: number; west: number; north: number; east: number }): Promise<Ring[]> {
+// True if an element's tags mark it as a water body.
+function isWater(tags: Record<string, string> | undefined): boolean {
+  if (!tags) return false;
+  return (
+    tags.natural === "water" ||
+    tags.waterway === "riverbank" ||
+    tags.landuse === "reservoir" ||
+    tags.landuse === "basin" ||
+    typeof tags.water === "string"
+  );
+}
+
+// Fetch polygons, split into water rings and other no-build rings.
+async function fetchRings(bbox: { south: number; west: number; north: number; east: number }): Promise<{ water: Ring[]; noBuild: Ring[] }> {
+  const water: Ring[] = [];
+  const noBuild: Ring[] = [];
   try {
     const resp = await axios.post(OVERPASS, buildQuery(bbox), {
       headers: OVERPASS_HEADERS,
       timeout: 30_000,
     });
     const elements: any[] = resp.data?.elements ?? [];
-    const rings: Ring[] = [];
     for (const el of elements) {
-      // Ways carry `geometry` directly.
+      const target = isWater(el.tags) ? water : noBuild;
       if (Array.isArray(el.geometry) && el.geometry.length >= 3) {
-        rings.push(el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
+        target.push(el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
       }
-      // Relations carry members, each with its own geometry (outer rings).
       if (Array.isArray(el.members)) {
         for (const m of el.members) {
           if (m.role === "outer" && Array.isArray(m.geometry) && m.geometry.length >= 3) {
-            rings.push(m.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
+            target.push(m.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
           }
         }
       }
     }
-    return rings;
   } catch {
-    return []; // fail open
+    // fail open
   }
+  return { water, noBuild };
 }
 
 // Standard ray-casting point-in-polygon test.
@@ -82,21 +110,26 @@ function pointInRing(lat: number, lng: number, ring: Ring): boolean {
   return inside;
 }
 
-// Given hex centres, return the set of hex ids that sit on a no-build feature.
-export async function noBuildHexes(
-  bbox: { south: number; west: number; north: number; east: number },
-  centers: { hex: string; lat: number; lng: number }[],
-): Promise<Set<string>> {
+function hexesInRings(centers: { hex: string; lat: number; lng: number }[], rings: Ring[]): Set<string> {
   const flagged = new Set<string>();
-  if (!centers.length) return flagged;
-
-  const rings = await fetchNoBuildRings(bbox);
   if (!rings.length) return flagged;
-
   for (const c of centers) {
     for (const ring of rings) {
       if (pointInRing(c.lat, c.lng, ring)) { flagged.add(c.hex); break; }
     }
   }
   return flagged;
+}
+
+// Given hex centres, classify them into water (exclude) and no-build (penalise).
+export async function classifyLandUse(
+  bbox: { south: number; west: number; north: number; east: number },
+  centers: { hex: string; lat: number; lng: number }[],
+): Promise<LandUseResult> {
+  if (!centers.length) return { waterHexes: new Set(), noBuildHexes: new Set() };
+  const { water, noBuild } = await fetchRings(bbox);
+  return {
+    waterHexes: hexesInRings(centers, water),
+    noBuildHexes: hexesInRings(centers, noBuild),
+  };
 }

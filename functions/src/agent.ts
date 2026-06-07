@@ -84,6 +84,50 @@ async function groundedQuery(query: string): Promise<AgentTrailItem> {
   throw lastErr;
 }
 
+// AI fallback for property pricing when the 99acres scrape returns nothing.
+// Grounded Google search → a rough ₹/sqft + typical configuration for the area.
+// Marked clearly as an AI estimate so the UI can label it honestly.
+export interface AiPropertyEstimate {
+  medianPricePerSqft: number | null;
+  avgBHK: number | null;
+  note: string;                 // short human sentence, e.g. "Approx ₹7,500/sqft (AI estimate)"
+  sources: { uri: string; title?: string }[];
+}
+
+export async function aiPropertyEstimate(area: string, city: string): Promise<AiPropertyEstimate | null> {
+  const model = vertex().getGenerativeModel({
+    model: "gemini-2.5-flash",
+    tools: [{ googleSearch: {} } as any],
+  });
+  const prompt = `Using Google Search, estimate residential real-estate pricing in ${area}, ${city}, India.
+Reply with ONLY JSON, no prose:
+{"medianPricePerSqft": <integer rupees per sqft, or null if unknown>, "avgBHK": <typical number of bedrooms as a decimal e.g. 2.5, or null>, "note": "<one short sentence on the local property market>"}`;
+
+  try {
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const candidate: any = resp.response?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+    const meta = candidate?.groundingMetadata ?? {};
+    const sources: { uri: string; title?: string }[] = [];
+    for (const c of meta.groundingChunks ?? []) {
+      if (c.web?.uri) sources.push({ uri: c.web.uri, title: c.web.title });
+    }
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]);
+    const price = typeof parsed.medianPricePerSqft === "number" && parsed.medianPricePerSqft > 0 ? Math.round(parsed.medianPricePerSqft) : null;
+    if (price == null) return null; // nothing useful
+    return {
+      medianPricePerSqft: price,
+      avgBHK: typeof parsed.avgBHK === "number" ? parsed.avgBHK : null,
+      note: String(parsed.note || "").slice(0, 200),
+      sources: sources.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // One mini-query per quadrant — gives spatial variation in the growth score.
 async function quadrantScore(area: string, city: string, label: string): Promise<{ growthScore: number; headline: string }> {
   const model = vertex().getGenerativeModel({

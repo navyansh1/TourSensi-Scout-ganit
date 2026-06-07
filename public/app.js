@@ -1620,8 +1620,8 @@ function openExecModal() {
 
     return `
       <tr>
-        <td style="padding: 10px; font-weight: 700; border-bottom: 1px solid var(--border); font-size: 11.5px;">
-          <span style="border-left: 3px solid ${scoreColor(r.final)}; padding-left: 6px;">Site ${i + 1}</span>
+        <td style="padding: 10px; font-weight: 700; border-bottom: 1px solid var(--border); font-size: 11.5px; white-space: nowrap;">
+          <span style="border-left: 3px solid ${scoreColor(r.final)}; padding-left: 6px; white-space: nowrap;">Site #${i + 1}</span>
         </td>
         <td style="padding: 10px; border-bottom: 1px solid var(--border);"><span style="background: ${scoreColor(r.final)}; color: #fff; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">${r.final}/100</span></td>
         <td style="padding: 10px; border-bottom: 1px solid var(--border); font-weight: 500; font-size: 12px;">${escapeHtml(locDesc)}</td>
@@ -1657,7 +1657,7 @@ function openExecModal() {
   const realEstateHTML = re ? `
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px;">
       <div style="background: var(--bg-2); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
-        <div style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Median Property Price</div>
+        <div style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Median Property Price${re.aiEstimated ? ' <span style="color: var(--ganit-orange);">· AI estimate</span>' : ''}</div>
         <div style="font-size: 18px; font-weight: 800; color: var(--ganit-blue); margin-top: 4px;">₹${Math.round(re.medianPricePerSqft).toLocaleString("en-IN")}/sqft</div>
       </div>
       <div style="background: var(--bg-2); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
@@ -1761,10 +1761,11 @@ function openExecModal() {
           ${comparisonTable}
         </div>
         
+        ${(re && re.medianPricePerSqft > 0) ? `
         <div class="eb-section" style="margin-top: 24px;">
           <h4>🏘️ Local Real Estate Indicators</h4>
           ${realEstateHTML}
-        </div>
+        </div>` : ""}
 
         <div class="eb-section" style="margin-top: 24px;">
           <h4>📖 Regional Background Summary</h4>

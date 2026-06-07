@@ -19,11 +19,11 @@ import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
-import { runGrowthAgent } from "./agent";
+import { runGrowthAgent, aiPropertyEstimate } from "./agent";
 import { getRealEstateSignals } from "./realestate";
 import { scoreHexes, topRecommendations, placeQuality, hexCenters } from "./scoring";
 import { waterCenters, centerKey } from "./water";
-import { noBuildHexes } from "./landuse";
+import { classifyLandUse } from "./landuse";
 import { parseFile, suggestColumnMapping, applyMapping } from "./importLocations";
 // Wikipedia context is currently disabled (see analyze-stream). Kept for re-enable.
 // import { wikiContext } from "./wikipedia";
@@ -132,7 +132,8 @@ router.post("/analyze-stream", async (req, res) => {
     const overlayList = contextPois;
     const wikiInfo = wiki.status === "fulfilled" ? wiki.value : null;
     const pinInfoData = pinData.status === "fulfilled" ? pinData.value : null;
-    const reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
+    let reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
+    reSignals = await withAiPropertyFallback(reSignals, geo.area, geo.city);
     const popData = population.status === "fulfilled" ? population.value : null;
     const fallbackAgent = {
       area: geo.area, city: geo.city, growthScore: 50,
@@ -149,10 +150,14 @@ router.post("/analyze-stream", async (req, res) => {
 
     send("progress", { step: "score", label: "📊 Scoring hexes…" });
     const centers = hexCenters(geo.bbox);
-    const [excludeHexes, penalizeHexes] = await Promise.all([
+    const [oceanSet, landUse] = await Promise.all([
       oceanHexes(geo.bbox, centers),
-      noBuildHexes(geo.bbox, centers).catch(() => new Set<string>()),
+      classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
     ]);
+    // Exclude (remove) = open ocean (elevation) + all OSM water bodies. Penalise
+    // (floor to red, keep on map) = railway/airport/forest.
+    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes]);
+    const penalizeHexes = landUse.noBuildHexes;
     const hexes = scoreHexes({
       vertical, bbox: geo.bbox,
       center: { lat: geo.lat, lng: geo.lng },
@@ -257,7 +262,8 @@ router.post("/analyze", async (req, res) => {
     const competitorsList = competitors.status === "fulfilled" ? competitors.value : [];
     const ownList = ownBrand.status === "fulfilled" ? ownBrand.value : [];
     const osmList = osmBackdrop.status === "fulfilled" ? osmBackdrop.value : [];
-    const reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
+    let reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
+    reSignals = await withAiPropertyFallback(reSignals, geo.area, geo.city);
     const agentResult: any = agent.status === "fulfilled" ? agent.value : {
       area: geo.area, city: geo.city, growthScore: 50,
       reasoning: "(agent unavailable)", trail: [],
@@ -271,10 +277,12 @@ router.post("/analyze", async (req, res) => {
     };
 
     const centers = hexCenters(geo.bbox);
-    const [excludeHexes, penalizeHexes] = await Promise.all([
+    const [oceanSet, landUse] = await Promise.all([
       oceanHexes(geo.bbox, centers),
-      noBuildHexes(geo.bbox, centers).catch(() => new Set<string>()),
+      classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
     ]);
+    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes]);
+    const penalizeHexes = landUse.noBuildHexes;
     const hexes = scoreHexes({
       vertical,
       bbox: geo.bbox,
@@ -422,6 +430,27 @@ async function oceanHexes(
   } catch {
     return new Set();
   }
+}
+
+// When the property scrape returned no usable median price, fall back to a
+// grounded-AI estimate so the UI can still show a (clearly-labelled) figure
+// instead of ₹0. Returns a RealEstateSignals-shaped object or the original.
+async function withAiPropertyFallback(
+  reSignals: any,
+  area: string,
+  city: string,
+): Promise<any> {
+  const hasPrice = reSignals && typeof reSignals.medianPricePerSqft === "number" && reSignals.medianPricePerSqft > 0;
+  if (hasPrice) return reSignals;
+  const est = await aiPropertyEstimate(area, city).catch(() => null);
+  if (!est) return reSignals;
+  return {
+    ...(reSignals ?? { area, city, source: "merged", sampleSize: 0, medianPrice: null, underConstructionShare: 0, listings: [], fetchedAt: Date.now() }),
+    medianPricePerSqft: est.medianPricePerSqft,
+    avgBHK: est.avgBHK,
+    aiEstimated: true,
+    aiNote: est.note,
+  };
 }
 
 // Deterministic honesty pass over the executive summary. Ensures the blue
