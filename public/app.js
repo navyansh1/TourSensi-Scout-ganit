@@ -1599,6 +1599,69 @@ function renderCompareTable(sites) {
   `;
 }
 
+// A compact stat strip of REAL signals we already collect but never surfaced in
+// the exec summary: live population + density (WorldPop), and competitor health
+// from Google Places (avg rating, review volume, share of shuttered businesses).
+function renderMarketSnapshot(data) {
+  const pop = data.population;
+  const pq = data.placeQuality;
+  const cards = [];
+
+  const fmtInt = (n) => Math.round(n).toLocaleString("en-IN");
+
+  if (pop && pop.totalPopulation > 0) {
+    cards.push(`
+      <div class="ms-card">
+        <div class="ms-label">Area Population</div>
+        <div class="ms-value">${fmtInt(pop.totalPopulation)}</div>
+        <div class="ms-sub">WorldPop ${pop.year ?? ""}</div>
+      </div>`);
+    cards.push(`
+      <div class="ms-card">
+        <div class="ms-label">Population Density</div>
+        <div class="ms-value">${fmtInt(pop.densityPerKm2)}</div>
+        <div class="ms-sub">people / km²</div>
+      </div>`);
+  }
+
+  if (pq) {
+    if (pq.avgRating != null) {
+      cards.push(`
+        <div class="ms-card">
+          <div class="ms-label">Avg Competitor Rating</div>
+          <div class="ms-value">${pq.avgRating.toFixed(1)} ★</div>
+          <div class="ms-sub">across nearby ${escapeHtml((data.vertical || "").replace("_", " ").toLowerCase())}</div>
+        </div>`);
+    }
+    if (pq.totalReviews > 0) {
+      cards.push(`
+        <div class="ms-card">
+          <div class="ms-label">Footfall (Reviews)</div>
+          <div class="ms-value">${fmtInt(pq.totalReviews)}</div>
+          <div class="ms-sub">total Google reviews nearby</div>
+        </div>`);
+    }
+    // Closed-business share: a high value signals a declining high street.
+    const closedPct = Math.round((pq.closedShare || 0) * 100);
+    if (pq.closedShare != null) {
+      const tone = closedPct >= 20 ? "var(--bad)" : closedPct >= 10 ? "var(--warn)" : "var(--good)";
+      cards.push(`
+        <div class="ms-card">
+          <div class="ms-label">Shuttered Businesses</div>
+          <div class="ms-value" style="color:${tone}">${closedPct}%</div>
+          <div class="ms-sub">permanently closed nearby</div>
+        </div>`);
+    }
+  }
+
+  if (!cards.length) return "";
+  return `
+    <div class="eb-section">
+      <h4>📈 Market snapshot</h4>
+      <div class="market-snapshot">${cards.join("")}</div>
+    </div>`;
+}
+
 // ---------- Executive Modal ----------
 function openExecModal() {
   if (!lastResult) return;
@@ -1702,6 +1765,8 @@ function openExecModal() {
 
       <!-- View 1: Summary -->
       <div id="execSummaryView">
+        ${renderMarketSnapshot(lastResult)}
+
         ${ex.marketState ? `
         <div class="eb-section">
           <h4>📍 Market reality</h4>

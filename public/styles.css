@@ -616,6 +616,20 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .exec-actions .ghost, .exec-tabs .ghost { border: 1px solid var(--border); color: var(--text-2); background: #fff; }
 .exec-actions .ghost:hover, .exec-tabs .ghost:hover { border-color: var(--ganit-blue); color: var(--ganit-blue); }
 .exec-body .eb-section { margin-bottom: 22px; }
+/* Market snapshot stat strip at the top of the exec summary */
+.market-snapshot {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px;
+}
+.market-snapshot .ms-card {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+}
+.market-snapshot .ms-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--muted);
+}
+.market-snapshot .ms-value {
+  font-size: 22px; font-weight: 800; color: var(--ganit-blue); margin-top: 4px; line-height: 1.1;
+}
+.market-snapshot .ms-sub { font-size: 11px; color: var(--text-2); margin-top: 3px; }
 .exec-body h4 {
   text-transform: uppercase; font-size: 11px; letter-spacing: 1px;
   color: var(--ganit-blue); margin: 0 0 10px; font-weight: 800;

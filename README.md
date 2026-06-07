@@ -30,6 +30,11 @@ In ~30 seconds you get:
 
 ## What's new (latest iteration)
 
+- **Exec-summary depth + data honesty (June 7, 2026, later)**:
+  - **Market snapshot strip** — the executive summary now opens with a stat strip of real signals we already collect but never surfaced: **area population + density** (WorldPop), **average competitor rating**, **total review volume** (footfall proxy), and **% of permanently-closed businesses nearby** (a declining-high-street signal, colour-coded). Each card only renders when its data exists (`renderMarketSnapshot`).
+  - **AI property-price fallback** — when the 99acres scrape returns no usable price (the old "₹0/sqft" problem), a **grounded Gemini query** estimates median ₹/sqft + typical BHK for the locality, shown with a clear orange **"· AI estimate"** label (`aiPropertyEstimate` in `agent.ts`, `withAiPropertyFallback` in `index.ts`). The Local Real Estate Indicators block is hidden entirely when no price is available from either source.
+  - **Coastal water finally fixed** — water bodies (sea, rivers, lakes, canals, **backwaters/lagoons**) are now **hard-excluded** from OSM polygons, not just penalised. The earlier elevation-only ocean check missed Chennai's backwaters because they read a *positive* elevation; OSM knows they're water (`classifyLandUse`).
+  - **Exec-summary UI fixes** — "Site #N" cells no longer wrap awkwardly (`white-space: nowrap`).
 - **Rebrand + map-quality pass (June 7, 2026)**:
   - **Renamed to GeoScout IQ** — the product is now **GeoScout IQ** (the "IQ" rendered in brand orange), with the subtitle **"Location Decision Intelligence"**. The Ganit logo and the wordmark are separated by a vertical divider so it reads as *a Ganit product*. Updated across the header, browser title, About modal, and the Wikipedia client User-Agent.
   - **No ocean zones** — hexes whose centre falls on open sea are detected via the **Google Maps Elevation API** (elevation ≤ 0 m) and excluded from scoring and the heatmap entirely, so the grid never paints over water (`water.ts`). Fails open if the Elevation API is unavailable.
