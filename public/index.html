@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>TourSensi Scout — AI Site Selection for India</title>
+  <title>GeoScout IQ — Location Decision Intelligence for India</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -15,9 +15,10 @@
   <header class="topbar">
     <div class="brand">
       <img class="logo-img" src="/img/ganit-logo.png" alt="Ganit — Data Speaks" />
+      <span class="brand-divider" aria-hidden="true"></span>
       <div>
-        <div class="brand-name">TourSensi <span class="accent">Scout</span></div>
-        <div class="brand-tag">AI-powered site selection for BFSI &amp; FMCG</div>
+        <div class="brand-name">GeoScout <span class="accent">IQ</span></div>
+        <div class="brand-tag">Location Decision Intelligence</div>
       </div>
     </div>
     <!-- Custom map controls, centered in the top bar, that drive the Google map
@@ -47,6 +48,7 @@
       <!-- Top-bar executive summary button kept for future restore.
       <button id="execBtn" class="primary ghost-primary hidden"><i class="uil uil-file-alt"></i>View Executive Summary</button>
       -->
+      <button id="compareBtn" class="ghost hidden"><i class="uil uil-balance-scale"></i>Compare (<span id="compareCount">0</span>)</button>
       <button id="importBtn" class="ghost"><i class="uil uil-folder-open"></i>Import my locations</button>
       <button id="infoBtn" class="ghost icon-btn hidden" title="About this tool & data sources" aria-label="About"><i class="uil uil-info-circle"></i></button>
       <!-- Settings button removed from the top bar per request. Kept for future restore.
@@ -101,6 +103,10 @@
       <section id="summary" class="hidden">
         <!-- Headline stat card -->
         <div id="resultStats" class="result-stats"></div>
+
+        <!-- Add the current analysis to the side-by-side comparison set.
+             Compare feature is currently HIDDEN (kept for easy re-enable). -->
+        <button id="addCompareBtn" class="ghost mini compare-add hidden"><i class="uil uil-plus-circle"></i>Add this location to compare</button>
 
         <!-- Mini exec card (sidebar version) -->
         <div id="execMini" class="exec-mini"></div>
@@ -179,12 +185,22 @@
     </div>
   </div>
 
+  <!-- Side-by-side location comparison modal -->
+  <div id="compareModal" class="modal hidden">
+    <div class="modal-body compare-modal">
+      <button class="close" id="compareClose">×</button>
+      <h2>Compare locations</h2>
+      <p class="info-lede">Side-by-side decision view of every location you've added. The leader in each row is highlighted.</p>
+      <div id="compareContent"></div>
+    </div>
+  </div>
+
   <!-- Info / About modal -->
   <div id="infoModal" class="modal hidden">
     <div class="modal-body info-modal">
       <button class="close" id="infoClose">×</button>
-      <h2>About TourSensi Scout</h2>
-      <p class="info-lede">AI-powered site selection for BFSI &amp; FMCG in India. We fuse live Google Maps data, multi-source web signals and Gemini grounding agents into one decision in ~30 seconds.</p>
+      <h2>About GeoScout IQ</h2>
+      <p class="info-lede">Location Decision Intelligence for BFSI &amp; FMCG in India. We fuse live Google Maps data, multi-source web signals and Gemini grounding agents into one decision in ~30 seconds.</p>
 
       <h3 class="info-h">What makes it strong</h3>
       <ul class="info-list">

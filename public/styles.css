@@ -10,7 +10,8 @@
   --bg-2: #f6f7fb;
   --panel: #ffffff;
   --panel-2: #f1f3f9;
-  --border: #e1e5ee;
+  --border: #c2c8d6;          /* darkened from #e1e5ee for clearer lines/borders */
+  --border-strong: #aab1c4;   /* a touch darker again — used for the brand divider */
   --text: #1a1d2b;
   --text-2: #4a5168;
   --muted: #6b7390;
@@ -32,6 +33,8 @@ html, body { margin: 0; padding: 0; height: 100%; background: var(--bg-2); color
 .topbar .map-controls { justify-self: center; }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand .logo-img { height: 40px; }
+/* Thin rule separating the Ganit parent brand from the GeoScout IQ product. */
+.brand-divider { width: 1px; height: 28px; background: var(--border-strong); flex-shrink: 0; margin: 0 2px; }
 /* Text block fills the logo height and is centered against it */
 .brand > div { display: flex; flex-direction: column; justify-content: center; height: 40px; }
 /* Match the rounded geometric wordmark of the Ganit "data speaks" logo —
@@ -211,12 +214,20 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .avoid-why { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 .avoid-empty { font-size: 12.5px; color: var(--muted); padding: 6px 0; }
 
+.rec-rank { display: inline-flex; align-items: center; gap: 6px; }
 .rec-rank .rank-num {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 30px; height: 26px; padding: 0 8px;
   font-size: 14px; font-weight: 800; color: #fff; border-radius: 7px;
   background: var(--score-color, var(--ganit-blue));
 }
+/* Cannibalization overlap badge on a recommendation card */
+.cann-badge {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.3px;
+  padding: 3px 7px; border-radius: 5px; white-space: nowrap; cursor: help;
+}
+.cann-badge.high     { background: #fdecec; color: #dc2626; border: 1px solid #f5b5b5; }
+.cann-badge.moderate { background: #fdf3e5; color: #b45309; border: 1px solid #f0cf9a; }
 .rec-card-score {
   font-size: 13px;
   font-weight: 800;
@@ -483,7 +494,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .gmaps-inline { font-size: 11px; color: var(--ganit-blue); text-decoration: none; overflow-wrap: anywhere; }
 .gmaps-inline:hover { text-decoration: underline; color: var(--ganit-orange); }
 .close { position: absolute; right: 8px; top: 6px; background: transparent; border: none;
-  color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+  color: var(--text-2); font-size: 22px; cursor: pointer; line-height: 1; }
 .close:hover { color: var(--text); }
 
 .score-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
@@ -796,6 +807,39 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .src-row strong { color: var(--text); }
 .src-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
 .info-foot { margin-top: 20px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; }
+
+/* ===== COMPARE LOCATIONS ===== */
+.compare-add { margin: 8px 0 4px; width: 100%; justify-content: center; }
+.compare-modal { width: 880px !important; max-width: 94vw; max-height: 88vh; overflow-y: auto; }
+.compare-table-wrap { overflow-x: auto; margin-top: 14px; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.compare-table th, .compare-table td {
+  border: 1px solid var(--border); padding: 9px 12px; text-align: center; vertical-align: middle;
+}
+.compare-table thead th { background: var(--bg-2); position: relative; min-width: 130px; }
+.compare-table .metric-col { text-align: left; font-weight: 700; color: var(--text-2); background: var(--bg-2); white-space: nowrap; }
+.cmp-loc-name { font-weight: 800; color: var(--ganit-blue); font-size: 14px; }
+.cmp-loc-sub  { font-size: 10.5px; color: var(--muted); text-transform: capitalize; margin-top: 2px; }
+.cmp-loc-rec  { font-size: 10px; font-weight: 800; margin-top: 5px; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+.cmp-loc-rec.rec-go     { background: #e7f7ec; color: #15803d; }
+.cmp-loc-rec.rec-avoid  { background: #fdecec; color: #dc2626; }
+.cmp-loc-rec.rec-caution{ background: #fdf3e5; color: #b45309; }
+.cmp-crown { font-size: 13px; }
+.compare-table td.win { background: #e7f7ec; font-weight: 800; color: #15803d; }
+.compare-table th.col-winner, .compare-table td.col-winner { box-shadow: inset 0 0 0 2px rgba(254,110,6,0.35); }
+.cmp-remove {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; line-height: 16px;
+  border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 16px; border-radius: 4px;
+}
+.cmp-remove:hover { background: #fdecec; color: var(--bad); }
+.compare-foot { margin-top: 12px; font-size: 11.5px; color: var(--muted); }
+
+/* No-build zone banner in the hex detail panel */
+.nobuild-banner {
+  background: #fdecec; color: #b91c1c; border: 1px solid #f3b4b4;
+  border-radius: 8px; padding: 8px 10px; font-size: 12px; font-weight: 600;
+  line-height: 1.4; margin-bottom: 10px;
+}
 
 /* Welcome Placeholder */
 .welcome-placeholder {

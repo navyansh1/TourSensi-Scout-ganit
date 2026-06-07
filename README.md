@@ -1,6 +1,6 @@
-# TourSensi Scout
+# GeoScout IQ
 
-**AI-powered site selection for BFSI & FMCG companies in India.**
+**Location Decision Intelligence for BFSI & FMCG companies in India.**
 A productized Ganit tool that recommends where banks should open ATMs/branches and where retailers should open stores/warehouses — backed by Google Maps, multi-source web data, and Gemini grounding agents.
 
 Live: **https://toursensi-ganit-71c77.web.app**
@@ -30,6 +30,14 @@ In ~30 seconds you get:
 
 ## What's new (latest iteration)
 
+- **Rebrand + map-quality pass (June 7, 2026)**:
+  - **Renamed to GeoScout IQ** — the product is now **GeoScout IQ** (the "IQ" rendered in brand orange), with the subtitle **"Location Decision Intelligence"**. The Ganit logo and the wordmark are separated by a vertical divider so it reads as *a Ganit product*. Updated across the header, browser title, About modal, and the Wikipedia client User-Agent.
+  - **No ocean zones** — hexes whose centre falls on open sea are detected via the **Google Maps Elevation API** (elevation ≤ 0 m) and excluded from scoring and the heatmap entirely, so the grid never paints over water (`water.ts`). Fails open if the Elevation API is unavailable.
+  - **No-build land penalty** — hexes sitting on a **railway, airport/runway, river/lake, or large forest** are detected from **OpenStreetMap** land-use polygons (one Overpass `out geom;` query, local point-in-polygon test — zero extra per-hex API calls) and floored to a near-zero score so they read red and can never be recommended. Kept on the map (not deleted) because OSM polygons can be imperfect; flooring is the safe call (`landuse.ts`). A 🚫 "No-build zone" banner explains it in the hex panel. Fails open on any Overpass hiccup.
+  - **Cannibalization warning** — each top recommendation is checked against the user's **own existing network** (both backend brand-search results and imported-CSV locations). Sites that sit inside a vertical-aware trade-area radius of an existing own site are flagged with an **⚠️ Overlap** badge on the card plus a detail line (e.g. *"320 m from your existing 'HDFC Koramangala' — high overlap, likely to split footfall"*).
+  - **Labels now work on Satellite** — the Labels toggle previously did nothing on satellite view (the styler only affects roadmap). It now switches between Google's **`hybrid`** (satellite **with** labels) and **`satellite`** (no labels) map types, so the toggle works correctly across Map / Satellite / Standard.
+  - **Darker UI lines** — the global border colour was deepened (`#e1e5ee` → `#c2c8d6`) for clearer separators app-wide, with a slightly stronger shade reserved for the brand divider; the modal close (×) buttons are also darker.
+  - **Hardened OSM calls** — all Overpass requests now send a proper **User-Agent** header (the public Overpass server returns HTTP 406 without one), fixing the previously-flaky OSM demand signal.
 - **Latest enhancements (June 2026)**:
   - **Interactive Recommended Markers (1-5)**: Numbered blue markers (`1` to `5`) corresponding to the top 5 recommended locations are plotted on the map. Features custom HTML overlay labels and full synchronization (clicking highlights H3 polygons, glides map, displays hex panel, and expands/scrolls sidebar cards).
   - **Premium Tooltip Popovers**: Replaced browser-default `title` tooltips on `+N more` chips with instant-hover / click-toggle custom `.more-tooltip` popovers, listing additional locations cleanly as bullet points.
@@ -115,6 +123,8 @@ In ~30 seconds you get:
 | Category | Source | Cost | Notes |
 |---|---|---|---|
 | **Geocoding** | Google Geocoding API + Reverse Geocoding | 10K free/mo + $5 per 1K | Reverse geocode fills PIN when neighborhood lookup didn't include it |
+| **Water / ocean** | Google Maps Elevation API | 40K free/mo | One batched call over all hex centres; elevation ≤ 0 m ⇒ sea ⇒ hex excluded (`water.ts`). Fails open. |
+| **No-build land** | OpenStreetMap Overpass (`out geom;`) | Free | Railway/airport/water/forest polygons; local point-in-polygon test floors those hexes (`landuse.ts`). Fails open. |
 | **Competitor POIs** | Google Places API (New) Text Search | 5K free/mo + $32 per 1K | 20-result `searchText` per analyze call. Now also captures `rating`, `userRatingCount`, `priceLevel`, `businessStatus` → fed into scoring as a footfall / "dying high-street" quality signal (`placeQuality` in `scoring.ts`). |
 | **Your brand POIs** | Same — keyword filter per `companies.ts` catalog | same | E.g. `"HDFC Bank", "HDFC ATM"` |
 | **Population (demand)** | **WorldPop** stats API (`api.worldpop.org`) | **Free, no key** | Real, current (2020, 100 m grid) gridded population for the analysis bbox. Async submit→poll. Density → primary demand signal (`worldpop.ts`). Replaces the dropped 2011-Census idea — current, not 14-yr-old, and spatial. |

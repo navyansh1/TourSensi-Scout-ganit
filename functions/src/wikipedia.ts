@@ -28,7 +28,7 @@ async function trySummary(title: string): Promise<WikiContext | null> {
       timeout: 5_000,
       validateStatus: () => true,
       // Wikipedia REST API requires a non-default User-Agent
-      headers: { "User-Agent": "TourSensiScout/1.0 (contact: navyvibrance@gmail.com)" },
+      headers: { "User-Agent": "GeoScoutIQ/1.0 (contact: navyvibrance@gmail.com)" },
     });
     if (resp.status !== 200) return null;
     const d = resp.data;

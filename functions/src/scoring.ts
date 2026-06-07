@@ -36,6 +36,7 @@ export interface HexScore {
     distanceKm: number;
     nearest: NearestAmenity[];     // closest relevant amenities for this hex
     proximityPhrase: string;       // human phrase, e.g. "320 m from a metro · 540 m from a mall"
+    noBuild?: boolean;             // true when the hex sits on no-build land (railway/airport/water/forest)
   };
   tag?: RecTag;
   tagReason?: string;
@@ -57,6 +58,11 @@ export interface ScoreInputs {
   // 0..100 demand contribution derived from real WorldPop population density
   // for the area (applied area-wide). null when unavailable.
   populationDemand?: number | null;
+  // Hex ids to omit entirely (e.g. ocean/sea hexes detected via elevation).
+  excludeHexes?: Set<string>;
+  // Hex ids to floor to near-zero (kept on the map but never recommended) —
+  // no-build land: railways, airports, rivers/lakes, large forests.
+  penalizeHexes?: Set<string>;
 }
 
 export function hexesInBbox(bbox: { south: number; west: number; north: number; east: number }): string[] {
@@ -67,6 +73,15 @@ export function hexesInBbox(bbox: { south: number; west: number; north: number; 
     [bbox.north, bbox.west],
   ];
   return h3.polygonToCells(polygon, HEX_RES);
+}
+
+// Centre lat/lng for each hex in the bbox — used to query elevation/water
+// before scoring so we can drop ocean hexes.
+export function hexCenters(bbox: { south: number; west: number; north: number; east: number }): { hex: string; lat: number; lng: number }[] {
+  return hexesInBbox(bbox).map(hex => {
+    const [lat, lng] = h3.cellToLatLng(hex);
+    return { hex, lat, lng };
+  });
 }
 
 function pointHex(lat: number, lng: number): string {
@@ -142,7 +157,9 @@ export function placeQuality(competitors: Poi[]): PlaceQuality {
 }
 
 export function scoreHexes(inputs: ScoreInputs): HexScore[] {
-  const hexes = hexesInBbox(inputs.bbox);
+  // Drop excluded (e.g. ocean/sea) hexes up front so they never get scored or drawn.
+  const exclude = inputs.excludeHexes;
+  const hexes = hexesInBbox(inputs.bbox).filter(h => !exclude || !exclude.has(h));
   const competitorByHex = countPerHex(inputs.competitors);
   const ownByHex = countPerHex(inputs.ownBrand);
   const osmDemandByHex = countPerHex(inputs.osmBackdrop);
@@ -256,6 +273,12 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
     if (demand < 30 && access < 35) final = Math.round(final * 0.7);
     final = Math.max(0, Math.min(100, final));
 
+    // No-build land (railway / airport / river-lake / forest): floor the score so
+    // the hex reads red and can never be recommended. We keep it on the map (not
+    // deleted) because OSM polygons can be imperfect — flooring is the safe call.
+    const noBuild = inputs.penalizeHexes?.has(hex) ?? false;
+    if (noBuild) final = Math.min(final, 8);
+
     return {
       hex, lat, lng,
       demand, saturation, access, growth, final,
@@ -267,6 +290,7 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
         distanceKm: Number(distKm.toFixed(2)),
         nearest: ctx.nearest.slice(0, 6),
         proximityPhrase: proximityPhrase(ctx.nearest),
+        ...(noBuild ? { noBuild: true } : {}),
       },
     };
   });

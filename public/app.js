@@ -1,4 +1,4 @@
-// TourSensi Scout — frontend (vanilla JS, no build step).
+// GeoScout IQ — frontend (vanilla JS, no build step).
 
 const DEPLOYED_RUN = "https://api-bvb33x56gq-el.a.run.app";
 const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
@@ -11,6 +11,7 @@ let markers = [];
 let importedMarkers = [];
 let importedLocationsData = [];
 let lastResult = null;
+let comparedSites = [];   // side-by-side comparison set (snapshots of analyses)
 let mapsBrowserKey = "";
 let currentTheme = localStorage.getItem("scoutTheme") || "soft";
 let selectedPolyHighlight = null;
@@ -82,9 +83,23 @@ function initMap() {
 // terrain / labels / zoom controls, but living in our header).
 let _labelsOn = true;
 function applyMapStyle() {
-  // Only the roadmap base is styled; satellite/terrain ignore styles.
-  const isRoadmap = map.getMapTypeId() === "roadmap";
-  if (!isRoadmap) { map.setOptions({ styles: null }); return; }
+  const type = map.getMapTypeId();
+
+  // Satellite/hybrid: Google can't style labels off, but it has two distinct
+  // map types — "hybrid" = satellite WITH labels, "satellite" = no labels. So
+  // the Labels toggle switches between them. (Buttons mark the imagery view as
+  // "satellite"; we translate to hybrid when labels are wanted.)
+  if (type === "satellite" || type === "hybrid") {
+    const want = _labelsOn ? "hybrid" : "satellite";
+    if (type !== want) map.setMapTypeId(want);
+    map.setOptions({ styles: null });
+    return;
+  }
+
+  // Terrain ignores label styling — leave it alone.
+  if (type !== "roadmap") { map.setOptions({ styles: null }); return; }
+
+  // Roadmap: hide label elements via the styles array.
   const base = brandMapStyle();
   const labelsOff = [
     { elementType: "labels", stylers: [{ visibility: "off" }] },
@@ -207,6 +222,11 @@ function bindUI() {
   document.getElementById("execClose").onclick = () => document.getElementById("execModal").classList.add("hidden");
   document.getElementById("infoBtn").onclick = () => document.getElementById("infoModal").classList.remove("hidden");
   document.getElementById("infoClose").onclick = () => document.getElementById("infoModal").classList.add("hidden");
+
+  // Compare locations
+  document.getElementById("addCompareBtn").onclick = addCurrentToCompare;
+  document.getElementById("compareBtn").onclick = openCompareModal;
+  document.getElementById("compareClose").onclick = () => document.getElementById("compareModal").classList.add("hidden");
 
   // "Show on map" layers dropdown
   const layersBtn = document.getElementById("layersBtn");
@@ -461,11 +481,15 @@ function renderResult(data) {
     const scColor = scoreColor(r.final);
     const landmark = r.signals.nearest[0];
     const locDesc = `Zone: Near ${landmark ? escapeHtml(landmark.name) : 'Center'} (${getQuadLabel(r.lat, r.lng, data.geo)})`;
-    
+    const cann = cannibalizationFor(r, data);
+    const cannBadge = cann && cann.risk !== "NONE"
+      ? `<span class="cann-badge ${cann.risk.toLowerCase()}" title="${escapeHtml(cann.note)}">${cann.risk === "HIGH" ? "⚠️" : "🔶"} Overlap</span>`
+      : "";
+
     return `
       <li class="tagged-card" data-hex="${r.hex}" style="--score-color: ${scColor}">
         <div class="rec-card-header">
-          <div class="rec-rank"><span class="rank-num">#${i + 1}</span></div>
+          <div class="rec-rank"><span class="rank-num">#${i + 1}</span>${cannBadge}</div>
           <div class="rec-card-score">Score ${r.final}/100</div>
         </div>
         <div class="rec-card-summary">
@@ -895,6 +919,48 @@ function buildLayerControl(overlay) {
 
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
+// --- Cannibalization (client-side) ---------------------------------------
+// A recommended site sitting too close to one of the user's OWN existing
+// locations risks splitting footfall with itself instead of capturing new
+// demand. We compute this on the frontend because the user's real network can
+// come from EITHER the backend brand search (data.ownList) OR the imported CSV
+// (importedLocationsData) — both live here.
+const CANNIBAL_RADII = {
+  BFSI_ATM:       { high: 0.4, moderate: 0.9 },
+  BFSI_BRANCH:    { high: 0.8, moderate: 1.8 },
+  FMCG_RETAIL:    { high: 0.7, moderate: 1.5 },
+  FMCG_WAREHOUSE: { high: 3.0, moderate: 6.0 },
+};
+
+function haversineKm(aLat, aLng, bLat, bLng) {
+  const R = 6371, toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// Returns { risk: "HIGH"|"MODERATE"|"NONE", km, name, note } for a recommended
+// hex, or null when the user has no own sites to compare against.
+function cannibalizationFor(r, data) {
+  const own = [...(data.ownList || []), ...(importedLocationsData || [])]
+    .filter(o => typeof o.lat === "number" && typeof o.lng === "number");
+  if (!own.length) return null;
+
+  const radii = CANNIBAL_RADII[data.vertical] || { high: 0.7, moderate: 1.5 };
+  let best = null;
+  for (const o of own) {
+    const km = haversineKm(r.lat, r.lng, o.lat, o.lng);
+    if (!best || km < best.km) best = { km, name: o.name || "your site" };
+  }
+  const { km, name } = best;
+  if (km <= radii.high) {
+    return { risk: "HIGH", km, name, note: `${Math.round(km * 1000)} m from your existing "${name}" — high overlap, likely to split footfall.` };
+  } else if (km <= radii.moderate) {
+    return { risk: "MODERATE", km, name, note: `${km.toFixed(1)} km from your existing "${name}" — some catchment overlap.` };
+  }
+  return { risk: "NONE", km, name, note: `Nearest own site ("${name}") is ${km.toFixed(1)} km away — distinct catchment.` };
+}
+
 function toggleLayer(key, on) {
   const g = _layerGroups[key];
   if (!g) return;
@@ -949,6 +1015,7 @@ function showHexPanel(h, data) {
   const assessmentHTML = renderHexAssessment(h, data);
   
   document.getElementById("hexBody").innerHTML = `
+    ${h.signals.noBuild ? `<div class="nobuild-banner">🚫 No-build zone — this area sits on a railway, airport, water body or forest. Not a viable site.</div>` : ""}
     ${h.tag ? `<div class="rec-tag tag-${h.tag}" style="margin-bottom:8px; background: ${scoreColor(h.final)}">${TAG_LABELS[h.tag]}</div>` : ""}
     <div style="margin-bottom: 14px"><span class="final-pill" style="background:${scoreColor(h.final)}">Score ${h.final}/100</span></div>
 
@@ -1250,6 +1317,22 @@ function renderExpandedDetails(r, data) {
     </div>
   `);
 
+  // 3b. Cannibalization vs. the user's own existing network (if any imported/found)
+  const cann = cannibalizationFor(r, data);
+  if (cann && cann.risk !== "NONE") {
+    const icon = cann.risk === "HIGH" ? "⚠️" : "🔶";
+    const color = cann.risk === "HIGH" ? "#dc2626" : "#d97706";
+    bullets.push(`
+      <div class="rec-detail-bullet">
+        <span class="icon">${icon}</span>
+        <div>
+          <strong style="color:${color}">Cannibalization ${cap(cann.risk.toLowerCase())} risk:</strong>
+          ${escapeHtml(cann.note)}
+        </div>
+      </div>
+    `);
+  }
+
   // 4. Real estate details if available
   if (data.realEstate && data.realEstate.medianPricePerSqft) {
     bullets.push(`
@@ -1366,6 +1449,153 @@ function renderHexAssessment(h, data) {
         ${pros.length === 0 && cons.length === 0 ? "<li>Stable localized viability index. Review nearby context overlays.</li>" : ""}
       </ul>
     </div>
+  `;
+}
+
+// ---------- Compare locations ----------
+
+// Build a compact, comparable snapshot from a full analysis result.
+function compareSnapshot(data) {
+  const recs = data.recommendations || [];
+  const best = recs[0]?.final ?? Math.max(0, ...(data.hexes || []).map(h => h.final));
+  const avg = (data.hexes && data.hexes.length)
+    ? Math.round(data.hexes.reduce((a, h) => a + h.final, 0) / data.hexes.length) : 0;
+  // Average the recommended zones' sub-scores so the comparison reflects the
+  // *opportunity* zones, not the whole (mostly empty) bbox.
+  const avgOf = (key) => recs.length ? Math.round(recs.reduce((a, r) => a + (r[key] || 0), 0) / recs.length) : 0;
+  // Count HIGH-risk cannibalization among the top recs for this location.
+  const highCann = recs.filter(r => {
+    const c = cannibalizationFor(r, data);
+    return c && c.risk === "HIGH";
+  }).length;
+
+  return {
+    name: data.geo?.area || data.geo?.city || "Location",
+    address: data.geo?.formattedAddress || "",
+    vertical: data.vertical,
+    company: data.company?.name || null,
+    bestScore: best,
+    avgScore: avg,
+    demand: avgOf("demand"),
+    saturation: avgOf("saturation"),
+    access: avgOf("access"),
+    growth: data.agent?.growthScore ?? avgOf("growth"),
+    recommendation: data.agent?.executive?.recommendation || "CAUTION",
+    rating: data.agent?.executive?.rating ?? null,
+    competitors: data.counts?.competitors ?? (data.competitorsList?.length || 0),
+    ownSites: (data.ownList?.length || 0) + (importedLocationsData?.length || 0),
+    pricePerSqft: data.realEstate?.medianPricePerSqft ?? null,
+    highCannibalization: highCann,
+  };
+}
+
+function addCurrentToCompare() {
+  if (!lastResult) return;
+  const snap = compareSnapshot(lastResult);
+  // Replace an existing entry for the same area+vertical instead of duplicating.
+  const key = (s) => `${s.name}|${s.vertical}`;
+  const idx = comparedSites.findIndex(s => key(s) === key(snap));
+  if (idx >= 0) comparedSites[idx] = snap; else comparedSites.push(snap);
+  if (comparedSites.length > 4) comparedSites = comparedSites.slice(-4); // keep last 4
+
+  updateCompareButton();
+  const btn = document.getElementById("addCompareBtn");
+  if (btn) {
+    const original = btn.innerHTML;
+    btn.innerHTML = `<i class="uil uil-check-circle"></i>Added — ${comparedSites.length} in compare`;
+    setTimeout(() => { btn.innerHTML = original; }, 1800);
+  }
+}
+
+function updateCompareButton() {
+  // Compare feature is currently HIDDEN. Keep the top-bar button hidden
+  // regardless of state. (Remove this early-return to re-enable.)
+  const btn = document.getElementById("compareBtn");
+  if (btn) btn.classList.add("hidden");
+  return;
+  /* eslint-disable no-unreachable */
+  const count = document.getElementById("compareCount");
+  if (count) count.textContent = String(comparedSites.length);
+  if (btn) btn.classList.toggle("hidden", comparedSites.length < 1);
+}
+
+function removeFromCompare(i) {
+  comparedSites.splice(i, 1);
+  updateCompareButton();
+  if (comparedSites.length === 0) {
+    document.getElementById("compareModal").classList.add("hidden");
+  } else {
+    openCompareModal();
+  }
+}
+window.removeFromCompare = removeFromCompare;
+
+function openCompareModal() {
+  if (!comparedSites.length) return;
+  document.getElementById("compareContent").innerHTML = renderCompareTable(comparedSites);
+  document.getElementById("compareModal").classList.remove("hidden");
+}
+
+// Each row is a metric; columns are the locations. The winner of each row gets
+// a `.win` highlight. higherIsBetter controls the direction.
+function renderCompareTable(sites) {
+  const fmtPrice = (v) => v ? "₹" + Math.round(v).toLocaleString("en-IN") : "—";
+  const rows = [
+    { label: "Best zone score", key: "bestScore", better: "high", fmt: v => `${v}/100` },
+    { label: "Avg zone score",  key: "avgScore",  better: "high", fmt: v => `${v}/100` },
+    { label: "Demand",          key: "demand",    better: "high", fmt: v => `${v}` },
+    { label: "Free space (low competition)", key: "saturation", better: "high", fmt: v => `${v}` },
+    { label: "Accessibility",   key: "access",    better: "high", fmt: v => `${v}` },
+    { label: "Growth outlook",  key: "growth",    better: "high", fmt: v => `${v}/100` },
+    { label: "Competitors nearby", key: "competitors", better: "low", fmt: v => `${v}` },
+    { label: "Your sites nearby",  key: "ownSites",    better: "low", fmt: v => `${v}` },
+    { label: "High-overlap recs",  key: "highCannibalization", better: "low", fmt: v => v ? `⚠️ ${v}` : "0" },
+    { label: "Area ₹/sqft",     key: "pricePerSqft", better: "neutral", fmt: fmtPrice },
+  ];
+
+  // Determine an overall winner by best zone score (the headline metric).
+  let winnerIdx = 0;
+  sites.forEach((s, i) => { if (s.bestScore > sites[winnerIdx].bestScore) winnerIdx = i; });
+
+  const header = `
+    <tr>
+      <th class="metric-col">Metric</th>
+      ${sites.map((s, i) => `
+        <th class="${i === winnerIdx ? "col-winner" : ""}">
+          <div class="cmp-loc-name">${escapeHtml(s.name)}${i === winnerIdx ? ' <span class="cmp-crown">🏆</span>' : ""}</div>
+          <div class="cmp-loc-sub">${escapeHtml((s.vertical || "").replace("_", " "))}${s.company ? " · " + escapeHtml(s.company) : ""}</div>
+          <div class="cmp-loc-rec rec-${(s.recommendation || "").toLowerCase()}">${recommendationLabel(s.recommendation)}</div>
+          <button class="cmp-remove" onclick="removeFromCompare(${i})" title="Remove">×</button>
+        </th>`).join("")}
+    </tr>`;
+
+  const body = rows.map(row => {
+    const vals = sites.map(s => s[row.key]);
+    const numeric = vals.map(v => (typeof v === "number" ? v : null));
+    let winVal = null;
+    if (row.better === "high") winVal = Math.max(...numeric.filter(v => v != null));
+    else if (row.better === "low") winVal = Math.min(...numeric.filter(v => v != null));
+    // Only mark a winner when values actually differ.
+    const allSame = numeric.every(v => v === numeric[0]);
+    return `
+      <tr>
+        <td class="metric-col">${row.label}</td>
+        ${sites.map((s, i) => {
+          const v = s[row.key];
+          const isWin = row.better !== "neutral" && !allSame && v != null && v === winVal;
+          return `<td class="${isWin ? "win" : ""} ${i === winnerIdx ? "col-winner" : ""}">${row.fmt(v)}</td>`;
+        }).join("")}
+      </tr>`;
+  }).join("");
+
+  return `
+    <div class="compare-table-wrap">
+      <table class="compare-table">
+        <thead>${header}</thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <div class="compare-foot">🏆 = leading location overall (by best zone score). Green cell = best in that row.</div>
   `;
 }
 

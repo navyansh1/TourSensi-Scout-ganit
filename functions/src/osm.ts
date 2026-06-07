@@ -5,6 +5,13 @@ import axios from "axios";
 
 const OVERPASS = "https://overpass-api.de/api/interpreter";
 
+// The public Overpass server rejects requests with no/blank User-Agent (HTTP
+// 406). Always identify ourselves.
+const OVERPASS_HEADERS = {
+  "Content-Type": "text/plain",
+  "User-Agent": "GeoScoutIQ/1.0 (contact: navyvibrance@gmail.com)",
+};
+
 export interface OsmPoi {
   id: string;
   name: string;
@@ -40,7 +47,7 @@ export async function osmPois(opts: {
   const query = `[out:json][timeout:25];(${filters});out body;`;
 
   const resp = await axios.post(OVERPASS, query, {
-    headers: { "Content-Type": "text/plain" },
+    headers: OVERPASS_HEADERS,
     timeout: 30_000,
   });
 
@@ -72,7 +79,7 @@ out body;`;
 
   try {
     const resp = await axios.post(OVERPASS, q, {
-      headers: { "Content-Type": "text/plain" },
+      headers: OVERPASS_HEADERS,
       timeout: 30_000,
     });
     const elements = resp.data?.elements ?? [];
@@ -105,7 +112,7 @@ export async function osmDemandProxy(bbox: { south: number; west: number; north:
   );out count;`;
   try {
     const resp = await axios.post(OVERPASS, q, {
-      headers: { "Content-Type": "text/plain" },
+      headers: OVERPASS_HEADERS,
       timeout: 20_000,
     });
     const n = resp.data?.elements?.[0]?.tags?.total;

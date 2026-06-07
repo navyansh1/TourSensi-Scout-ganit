@@ -21,7 +21,9 @@ import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
 import { runGrowthAgent } from "./agent";
 import { getRealEstateSignals } from "./realestate";
-import { scoreHexes, topRecommendations, placeQuality } from "./scoring";
+import { scoreHexes, topRecommendations, placeQuality, hexCenters } from "./scoring";
+import { waterCenters, centerKey } from "./water";
+import { noBuildHexes } from "./landuse";
 import { parseFile, suggestColumnMapping, applyMapping } from "./importLocations";
 // Wikipedia context is currently disabled (see analyze-stream). Kept for re-enable.
 // import { wikiContext } from "./wikipedia";
@@ -146,6 +148,11 @@ router.post("/analyze-stream", async (req, res) => {
     const agentResult: any = agent.status === "fulfilled" ? agent.value : fallbackAgent;
 
     send("progress", { step: "score", label: "📊 Scoring hexes…" });
+    const centers = hexCenters(geo.bbox);
+    const [excludeHexes, penalizeHexes] = await Promise.all([
+      oceanHexes(geo.bbox, centers),
+      noBuildHexes(geo.bbox, centers).catch(() => new Set<string>()),
+    ]);
     const hexes = scoreHexes({
       vertical, bbox: geo.bbox,
       center: { lat: geo.lat, lng: geo.lng },
@@ -154,6 +161,7 @@ router.post("/analyze-stream", async (req, res) => {
       realEstate: reSignals, growthScore: agentResult.growthScore,
       quadrantScores: agentResult.quadrantScores,
       populationDemand: popData ? densityToDemand(popData.densityPerKm2) : null,
+      excludeHexes, penalizeHexes,
     });
     const recs = topRecommendations(hexes, 5);
     send("progress", { step: "score", label: `📊 Scored ${hexes.length} hexes, picked top ${recs.length}`, done: true });
@@ -262,6 +270,11 @@ router.post("/analyze", async (req, res) => {
       ],
     };
 
+    const centers = hexCenters(geo.bbox);
+    const [excludeHexes, penalizeHexes] = await Promise.all([
+      oceanHexes(geo.bbox, centers),
+      noBuildHexes(geo.bbox, centers).catch(() => new Set<string>()),
+    ]);
     const hexes = scoreHexes({
       vertical,
       bbox: geo.bbox,
@@ -273,6 +286,7 @@ router.post("/analyze", async (req, res) => {
       realEstate: reSignals,
       growthScore: agentResult.growthScore,
       quadrantScores: agentResult.quadrantScores,
+      excludeHexes, penalizeHexes,
     });
 
     const recs = topRecommendations(hexes, 5);
@@ -390,6 +404,25 @@ router.get("/agent-trail/:id", async (req, res) => {
   if (!snap.exists) { res.status(404).json({ error: "not found" }); return; }
   res.json(snap.data());
 });
+
+// Detect ocean/sea hexes in the bbox via the Elevation API and return the set
+// of hex ids to exclude from scoring/drawing. Fails open (empty set) on error.
+async function oceanHexes(
+  _bbox: { south: number; west: number; north: number; east: number },
+  centers: { hex: string; lat: number; lng: number }[],
+): Promise<Set<string>> {
+  try {
+    const water = await waterCenters(centers.map(c => ({ lat: c.lat, lng: c.lng })));
+    if (!water.size) return new Set();
+    const exclude = new Set<string>();
+    for (const c of centers) {
+      if (water.has(centerKey(c.lat, c.lng))) exclude.add(c.hex);
+    }
+    return exclude;
+  } catch {
+    return new Set();
+  }
+}
 
 // Deterministic honesty pass over the executive summary. Ensures the blue
 // sidebar card never forces an optimistic verdict on a saturated or weak area,
