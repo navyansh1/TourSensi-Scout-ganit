@@ -585,6 +585,14 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 /* ===== FULL EXECUTIVE MODAL ===== */
 .exec-modal { width: 760px !important; padding: 0 !important; max-height: 88vh; overflow: hidden;
   display: flex; flex-direction: column; }
+/* The exec modal's close (×) sits on a dark-blue header, so the default dark
+   grey is invisible — make it white with a clear circular hover target. */
+.exec-modal > .close {
+  color: #fff; font-size: 26px; width: 32px; height: 32px; border-radius: 50%;
+  right: 14px; top: 14px; display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.14); z-index: 2;
+}
+.exec-modal > .close:hover { background: rgba(255,255,255,0.28); color: #fff; }
 .exec-head {
   background: linear-gradient(135deg, #1a2b8c, #2540c4);
   color: #fff; padding: 24px 32px;

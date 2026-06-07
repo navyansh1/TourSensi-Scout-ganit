@@ -1734,7 +1734,7 @@ function openExecModal() {
     </div>
   ` : `<div style="padding: 12px; font-size:12px; color: var(--muted);">No neighborhood real-estate scraping index cache available.</div>`;
 
-  const wikiBlurb = lastResult.wiki?.summary ? escapeHtml(lastResult.wiki.summary) : "No regional geographical summary details were cached on Wikipedia for this locality boundary.";
+  const wikiBlurb = lastResult.wiki?.summary ? escapeHtml(lastResult.wiki.summary) : "";
 
   document.getElementById("execContent").innerHTML = `
     <div class="exec-head">
@@ -1832,10 +1832,11 @@ function openExecModal() {
           ${realEstateHTML}
         </div>` : ""}
 
+        ${wikiBlurb ? `
         <div class="eb-section" style="margin-top: 24px;">
           <h4>📖 Regional Background Summary</h4>
           <p style="font-size: 13px; line-height: 1.55; color: var(--text-2); background: var(--bg-2); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">${wikiBlurb}</p>
-        </div>
+        </div>` : ""}
       </div>
     </div>`;
 
@@ -1880,9 +1881,15 @@ function buildMapSnapshotUrl(data = lastResult) {
     scale: "2",
     maptype: map?.getMapTypeId() === "satellite" ? "satellite" : "roadmap",
   });
-  const center = `${data.geo.lat},${data.geo.lng}`;
-  params.set("center", center);
-  params.set("zoom", String(Math.min(map?.getZoom?.() || 13, 14)));
+  // Auto-fit the snapshot so EVERY recommended site is visible. Instead of
+  // borrowing the live map's (possibly zoomed-in) center/zoom, we list each
+  // recommended pin — plus the area centre — as `visible` points; Google Static
+  // Maps then picks a center+zoom that frames them all.
+  const visiblePts = [
+    `${data.geo.lat},${data.geo.lng}`,
+    ...(data.recommendations || []).map(r => `${r.lat},${r.lng}`),
+  ];
+  visiblePts.forEach(pt => params.append("visible", pt));
 
   const addPath = (h) => {
     const color = scoreColor(h.final).match(/\d+/g).map(n => Number(n).toString(16).padStart(2, "0")).join("");
