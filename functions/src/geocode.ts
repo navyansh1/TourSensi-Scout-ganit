@@ -16,6 +16,32 @@ export interface GeocodeResult {
   matchLevel: string;
 }
 
+// Reverse-geocode a point to a human locality name (e.g. "Velachery, Chennai").
+// Used to label expansion gaps so the user sees a place, not just coordinates.
+export async function reverseGeocodeLocality(lat: number, lng: number): Promise<string | null> {
+  const key = process.env.GOOGLE_MAPS_SERVER_KEY;
+  if (!key) return null;
+  try {
+    const resp = await axios.get("https://maps.googleapis.com/maps/api/geocode/json", {
+      params: { latlng: `${lat},${lng}`, region: "in", key,
+        result_type: "sublocality|neighborhood|locality|administrative_area_level_2" },
+      timeout: 8_000,
+    });
+    const results = resp.data?.results ?? [];
+    let neighbourhood = "", locality = "";
+    for (const r of results) {
+      for (const c of r.address_components ?? []) {
+        if (!neighbourhood && (c.types.includes("sublocality") || c.types.includes("neighborhood"))) neighbourhood = c.long_name;
+        if (!locality && c.types.includes("locality")) locality = c.long_name;
+      }
+    }
+    if (neighbourhood && locality && neighbourhood !== locality) return `${neighbourhood}, ${locality}`;
+    return neighbourhood || locality || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function geocodeIndia(query: string): Promise<GeocodeResult | null> {
   const key = process.env.GOOGLE_MAPS_SERVER_KEY;
   if (!key) throw new Error("GOOGLE_MAPS_SERVER_KEY not set");

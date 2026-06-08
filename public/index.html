@@ -79,7 +79,7 @@
       <div class="mode-toggle" id="modeToggle" role="group" aria-label="Mode">
         <button class="mode-btn active" data-mode="finder" title="Evaluate one location">Site Finder</button>
         <button class="mode-btn" data-mode="planner" title="Upload your network, find where to expand">Expansion Planner</button>
-        <button class="mode-btn" data-mode="loan" title="Geographic collateral check for lending">Loan Assessor</button>
+        <button class="mode-btn hidden" data-mode="loan" title="Geographic collateral check for lending">Loan Assessor</button>
       </div>
 
       <!-- ===== SITE FINDER (single-location flow — the original UI) ===== -->
@@ -163,9 +163,6 @@
 
           <h3>🎯 Where to expand</h3>
           <ol id="gapList" class="rec-list"></ol>
-
-          <h3 style="margin-top:20px">🏠 Your network (weakest first)</h3>
-          <ol id="siteList" class="rec-list"></ol>
         </section>
       </div><!-- /plannerMode -->
 
@@ -183,6 +180,8 @@
         <div class="form-group">
           <label>Collateral location in India</label>
           <input id="loanLocation" type="text" placeholder="e.g. survey no / address / locality" />
+          <button id="loanPinBtn" class="ghost block" style="margin-top:8px"><i class="uil uil-map-marker-plus"></i><span id="loanPinLabel">Or drop a pin on the map</span></button>
+          <div id="loanPinHint" class="pin-hint hidden">📍 Click anywhere on the map to set the collateral location.</div>
         </div>
         <button id="loanRunBtn" class="primary"><i class="uil uil-search-location"></i>Assess location</button>
 
@@ -321,6 +320,15 @@
       <input type="file" id="importFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.json" style="margin-bottom: 12px;" />
       <div id="importStatus" class="status"></div>
       <pre id="importResult" class="import-result hidden"></pre>
+    </div>
+  </div>
+
+  <!-- Center loading overlay (used by Loan Assessor + deep analyses) -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loading-card">
+      <div class="loading-ring"></div>
+      <div class="loading-title" id="loadingTitle">Assessing the location…</div>
+      <div class="loading-sub" id="loadingSub">Reading the area, water & flood context, and nearby business health.</div>
     </div>
   </div>
 

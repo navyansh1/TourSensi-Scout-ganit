@@ -19,6 +19,7 @@ import { competitorsInArea } from "./places";
 import { fetchContextPois, hexContext } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
 import { placeQuality } from "./scoring";
+import { reverseGeocodeLocality } from "./geocode";
 import { VERTICAL_PLACES_TYPE, type Vertical } from "./companies";
 import type { Poi } from "./places";
 import type { ContextPoi } from "./context";
@@ -73,6 +74,7 @@ export interface ExpansionGap {
   revenueBand: PortfolioSite["revenueBand"];
   competitorCount: number;   // competition already proving the market exists
   nearestOwnKm: number;      // distance to the closest existing site of yours
+  locality?: string;         // reverse-geocoded place name, e.g. "Velachery, Chennai"
   reason: string;            // short one-liner (kept for compactness)
   factors: ScoreFactor[];    // transparent breakdown of every signal that moved the score
   nearbyAnchors: { label: string; name: string; meters: number; id?: string; lat?: number; lng?: number }[];  // schools/malls/metro/etc nearby
@@ -126,10 +128,26 @@ function regionalBbox(sites: { lat: number; lng: number }[]): {
     west = Math.min(west, s.lng); east = Math.max(east, s.lng);
   }
   const center = { lat: (south + north) / 2, lng: (west + east) / 2 };
-  // Pad ~2.5 km so single-point uploads still get a region around them.
-  const padLat = 2.5 / 111;
-  const padLng = 2.5 / (111 * Math.cos((center.lat * Math.PI) / 180) || 1);
+  // Pad generously so even a TIGHTLY-CLUSTERED network gets a wider search area
+  // and we suggest genuinely new territory — not just the immediate fringe.
+  // ~6 km pad on each side widens a concentrated cluster into a real region.
+  const padLat = 6 / 111;
+  const padLng = 6 / (111 * Math.cos((center.lat * Math.PI) / 180) || 1);
   south -= padLat; north += padLat; west -= padLng; east += padLng;
+
+  // Enforce a MINIMUM span (~14 km) so the expansion search always covers a
+  // meaningful area around the network, even if every site is in one pocket.
+  const MIN_SPAN_KM = 14;
+  const spanLatKm = (north - south) * 111;
+  if (spanLatKm < MIN_SPAN_KM) {
+    const addLat = (MIN_SPAN_KM - spanLatKm) / 2 / 111;
+    south -= addLat; north += addLat;
+  }
+  const spanLngKm = (east - west) * 111 * Math.cos((center.lat * Math.PI) / 180);
+  if (spanLngKm < MIN_SPAN_KM) {
+    const addLng = (MIN_SPAN_KM - spanLngKm) / 2 / (111 * Math.cos((center.lat * Math.PI) / 180) || 1);
+    west -= addLng; east += addLng;
+  }
 
   // Clamp span to MAX_SPAN_KM around the center.
   const halfLat = MAX_SPAN_KM / 2 / 111;
@@ -182,13 +200,26 @@ function footfallFor(
   populationDemand: number | null,
 ): number {
   const ctx = hexContext(point.lat, point.lng, vertical, context);
-  const q = placeQuality(competitors);
-  // Review volume across nearby commerce is a strong real-world footfall proxy.
-  const reviewSignal = Math.min(40, Math.log10((q.totalReviews || 0) + 1) * 12);
-  const popSignal = populationDemand != null ? populationDemand * 0.35 : 0;
-  const amenitySignal = Math.max(0, ctx.demandBoost) * 0.6; // schools/malls/offices nearby
-  const base = populationDemand != null ? 18 : 28; // small floor so empty isn't 0
-  return Math.max(0, Math.min(100, Math.round(base + popSignal + reviewSignal + amenitySignal)));
+  // Use only commerce NEAR this point (within ~1.2 km) so the footfall index
+  // varies spatially instead of pinning to the regional union. Weight reviews by
+  // proximity so a busy cluster right here beats one 1 km away.
+  let nearReviews = 0, nearCount = 0;
+  for (const c of competitors) {
+    const dKm = haversineKm(point, c);
+    if (dKm > 1.2) continue;
+    nearCount++;
+    const prox = 1 - dKm / 1.2;                       // 1 at the hex → 0 at 1.2 km
+    nearReviews += (c.userRatings || 0) * prox;
+  }
+  // Review volume nearby is a strong real-world footfall proxy (log-scaled).
+  const reviewSignal = Math.min(45, Math.log10(nearReviews + 1) * 13);
+  const clusterSignal = Math.min(12, nearCount * 2.5);   // density of commerce here
+  const amenitySignal = Math.max(0, ctx.demandBoost) * 0.55; // schools/malls/offices nearby
+  // Population is regional (same area-wide); keep its weight modest so per-hex
+  // signals (reviews, cluster, anchors) actually differentiate the score.
+  const popSignal = populationDemand != null ? populationDemand * 0.18 : 0;
+  const base = 8;
+  return Math.max(0, Math.min(100, Math.round(base + popSignal + reviewSignal + clusterSignal + amenitySignal)));
 }
 
 export async function planExpansion(opts: {
@@ -247,9 +278,11 @@ export async function planExpansion(opts: {
     populationDensity: popData?.densityPerKm2 ?? null,
   });
 
-  // (The per-gap deep rationale is now produced on-demand by /site-analysis when
-  // the user taps a card — richer than the old batch call and avoids spending
-  // AI tokens on gaps the user never opens.)
+  // Label each picked gap with a real locality name (reverse-geocode) so the
+  // user sees a place, not coordinates. Cheap — only the top picks.
+  await Promise.all(gaps.map(async (g) => {
+    g.locality = (await reverseGeocodeLocality(g.lat, g.lng)) ?? undefined;
+  }));
 
   const weakCount = scoredSites.filter(s => s.verdict === "WEAK").length;
   const avgHealth = scoredSites.length
@@ -336,9 +369,16 @@ async function findGaps(opts: {
     for (const c of allCompetitors) if (haversineKm(point, c) <= 1.2) competitorCount++;
 
     const footfallIndex = footfallFor(point, vertical, allContext, allCompetitors, populationDemand);
-    const marketProof = Math.min(20, competitorCount * 6);
-    const whitespaceBonus = competitorCount <= 3 ? 10 : 0;
-    const score = Math.max(0, Math.min(100, Math.round(footfallIndex * 0.7 + marketProof + whitespaceBonus)));
+    // Score: footfall is the dominant, differentiating driver (weighted 0.85 so
+    // it doesn't flatten at the top). Competition is a SWEET-SPOT signal — a
+    // little validates the market (+), too much splits share (−), zero is
+    // unproven. Distance from the network adds a small "fresh territory" nudge.
+    const sweetSpot = competitorCount === 0 ? 2
+      : competitorCount <= 3 ? 10            // ideal: proven but not crowded
+      : competitorCount <= 6 ? 4
+      : -8;                                   // saturated — penalise
+    const freshTerritory = Math.min(6, (nearestOwnKm - tradeKm) * 1.2); // farther = a bit better
+    const score = Math.max(0, Math.min(100, Math.round(footfallIndex * 0.85 + sweetSpot + freshTerritory)));
 
     // Every hex (covered or not) feeds the heatmap surface.
     heat.push({ hex, lat, lng, score, ownCovered });

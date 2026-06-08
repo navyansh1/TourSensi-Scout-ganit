@@ -2269,6 +2269,7 @@ async function runPlanner() {
   status.textContent = "";
   status.className = "status";
   runBtn.disabled = true;
+  runBtn.classList.add("analyzing");   // orange shimmer scan-line, like Site Finder
   plannerAnalysisCache = {}; // fresh run → drop any cached per-site analyses
   startPlannerProgress();
 
@@ -2290,6 +2291,7 @@ async function runPlanner() {
     status.className = "status error";
   } finally {
     runBtn.disabled = false;
+    runBtn.classList.remove("analyzing");
   }
 }
 
@@ -2311,54 +2313,65 @@ function renderPlanner(data) {
     <div class="pstat"><div class="pstat-num">${data.gaps.length}</div><div class="pstat-lbl">Expand here</div></div>
   `;
 
-  // Revenue framing only makes sense for retail/warehouse — not ATMs/branches.
-  const showRevenue = data.vertical === "FMCG_RETAIL" || data.vertical === "FMCG_WAREHOUSE";
-
-  // Gaps list — SCANNABLE summary cards. Top positive factors as compact chips;
-  // full reasoning + strategist's take live in the right-side panel on click.
+  // Gaps list — rich preview cards: score ring, locality, a deterministic
+  // one-line "why", a mini stats row, and named nearby anchors. Deep grounded
+  // analysis still opens in the right panel on tap.
+  const dist = (m) => m >= 1000 ? (m / 1000).toFixed(1) + " km" : m + " m";
+  const densBucket = (d) => d == null ? null : d >= 20000 ? "very dense" : d >= 10000 ? "dense" : d >= 5000 ? "mid-density" : d >= 2000 ? "suburban" : "sparse";
   const gapList = document.getElementById("gapList");
   gapList.innerHTML = data.gaps.map(g => {
-    // Lead with the strongest 3 positive signals as one-line chips.
-    const chips = (g.factors || [])
-      .filter(f => f.impact === "positive")
-      .slice(0, 3)
-      .map(f => `<span class="gap-chip">${escapeHtml(f.label)}</span>`).join("");
-    // Name the actual nearby places (not generic categories) and link each to Maps.
-    const dist = (m) => m >= 1000 ? (m / 1000).toFixed(1) + " km" : m + " m";
-    const anchorLine = (g.nearbyAnchors || []).length
-      ? `<div class="gap-line">📍 Near ${g.nearbyAnchors.slice(0, 3).map(a =>
-          `<a class="gmaps-inline" href="${gmapsUrl(a)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(a.name)}</a> <span class="pa-dist">(${escapeHtml(a.label)}, ${dist(a.meters)})</span>`
-        ).join(" · ")}</div>` : "";
+    const scColor = scoreColor(g.score);
+    const place = g.locality || `${g.lat.toFixed(3)}, ${g.lng.toFixed(3)}`;
+
+    // Deterministic one-line headline (no extra AI cost) from the strongest signals.
+    let headline;
+    if (g.competitorCount >= 1 && g.competitorCount <= 4 && g.footfallIndex >= 70) {
+      headline = "Proven, busy market with room for one more player";
+    } else if (g.competitorCount === 0 && g.footfallIndex >= 60) {
+      headline = "Untapped footfall — first-mover opportunity";
+    } else if (g.competitorCount >= 5) {
+      headline = "Active commercial zone, but competitive";
+    } else if (g.footfallIndex >= 70) {
+      headline = "Strong local footfall, well outside your network";
+    } else {
+      headline = "Reasonable demand with little overlap";
+    }
+
+    // Mini stats row.
+    const dens = densBucket(g.populationDensity);
+    const stats = [
+      { v: `${g.footfallIndex}`, l: "Footfall" },
+      { v: `${g.competitorCount}`, l: "Rivals <1km" },
+      { v: `${g.nearestOwnKm}km`, l: "From you" },
+    ];
+    if (dens) stats.push({ v: dens, l: "Density" });
+    const statsHTML = stats.map(s => `<div class="gstat"><div class="gstat-v">${escapeHtml(s.v)}</div><div class="gstat-l">${escapeHtml(s.l)}</div></div>`).join("");
+
+    // Named, linked nearby anchors (what's around).
+    const anchorsHTML = (g.nearbyAnchors || []).slice(0, 3).map(a =>
+      `<a class="gap-anchor gmaps-inline" href="${gmapsUrl(a)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(a.name)} <span class="gap-anchor-meta">· ${escapeHtml(a.label)} · ${dist(a.meters)}</span></a>`
+    ).join("");
+
     return `
-    <li class="rec-item planner-item gap-card" data-kind="gap" data-lat="${g.lat}" data-lng="${g.lng}"
-        data-comp="${g.competitorCount}" data-foot="${g.footfallIndex}">
-      <div class="rec-head">
-        <span class="rec-rank">#${g.rank}</span>
-        <span class="rec-score">Score ${g.score}/100</span>
-        ${showRevenue ? `<span class="rev-band band-${g.revenueBand.toLowerCase()}">${g.revenueBand} revenue</span>` : ""}
+    <li class="gap-card2 planner-item" data-kind="gap" data-lat="${g.lat}" data-lng="${g.lng}">
+      <div class="gap-top">
+        <div class="gap-ring" style="--ring: ${scColor}; --pct: ${g.score}">
+          <div class="gap-ring-inner"><span class="gap-ring-num">${g.score}</span></div>
+        </div>
+        <div class="gap-titlewrap">
+          <div class="gap-rank">EXPAND HERE · #${g.rank}</div>
+          <div class="gap-place">${escapeHtml(place)}</div>
+          <div class="gap-headline">${escapeHtml(headline)}</div>
+        </div>
       </div>
-      <div class="gap-line">🏬 ${g.competitorCount} competitor(s) nearby · ${g.nearestOwnKm} km from your closest site</div>
-      ${anchorLine}
-      <div class="gap-chips">${chips}</div>
-      <div class="gap-tap">Tap for full AI analysis →</div>
-      ${showRevenue ? `<button class="ghost mini rev-btn">💰 Estimate revenue (AI)</button><div class="rev-out hidden"></div>` : ""}
+      <div class="gap-stats">${statsHTML}</div>
+      ${anchorsHTML ? `<div class="gap-anchors-label">Footfall anchors nearby</div><div class="gap-anchors">${anchorsHTML}</div>` : ""}
+      <div class="gap-cta">See full AI analysis →</div>
     </li>`;
   }).join("") || `<li class="rec-empty">No clear expansion gaps in this region — your network already covers the demand, or there isn't enough footfall around the uncovered areas.</li>`;
 
-  // Sites list (weakest first)
-  const sites = [...data.sites].sort((a, b) => a.health - b.health);
-  const siteList = document.getElementById("siteList");
-  siteList.innerHTML = sites.map(s => `
-    <li class="rec-item planner-item" data-kind="site" data-lat="${s.lat}" data-lng="${s.lng}"
-        data-comp="${s.competitorCount}" data-foot="${s.footfallIndex}">
-      <div class="rec-head">
-        <span class="health-dot" style="background:${healthColor(s.health)}"></span>
-        <span class="rec-rank">${escapeHtml(s.name)}</span>
-        <span class="rec-score">${s.verdict}</span>
-      </div>
-      <div class="planner-foot">Health ${s.health}/100 · footfall ${s.footfallIndex}/100 · ${s.competitorCount} competitors${s.avgCompetitorRating != null ? ` · avg ★${s.avgCompetitorRating.toFixed(1)}` : ""}</div>
-      <div class="rec-reason">${escapeHtml(s.note)}</div>
-    </li>`).join("");
+  // (The "Your network (weakest first)" list was removed per request — the map
+  // still shows your sites as health-coloured pins; the focus is expansion.)
 
   // Per-item interactions: glide map, open right-side AI analysis, revenue est.
   const gapByKey = {}; const siteByKey = {};
@@ -2368,14 +2381,12 @@ function renderPlanner(data) {
   document.querySelectorAll(".planner-item").forEach(li => {
     const lat = parseFloat(li.dataset.lat), lng = parseFloat(li.dataset.lng);
     li.addEventListener("click", (e) => {
-      if (e.target.classList.contains("rev-btn")) return;
+      if (e.target.closest("a")) return; // let Maps links work
       if (map) { map.panTo({ lat, lng }); map.setZoom(15); }
       const key = `${lat},${lng}`;
       const kind = li.dataset.kind;
       openPlannerAnalysis(kind, kind === "gap" ? gapByKey[key] : siteByKey[key]);
     });
-    const revBtn = li.querySelector(".rev-btn");
-    if (revBtn) revBtn.onclick = () => estimateRevenue(li);
   });
 
   drawPlannerMarkers(data, { gapByKey, siteByKey });
@@ -2389,9 +2400,11 @@ async function openPlannerAnalysis(kind, item) {
   panel.classList.remove("hidden");
   const verticalSel = document.getElementById("plannerVertical").value;
   const accent = kind === "gap" ? "#1a00d9" : healthColor(item.health);
-  const title = kind === "gap" ? `Expansion target #${item.rank}` : escapeHtml(item.name);
+  const title = kind === "gap"
+    ? `#${item.rank} · ${escapeHtml(item.locality || "Expansion target")}`
+    : escapeHtml(item.name);
   const scoreLine = kind === "gap"
-    ? `Score ${item.score}/100 · ${item.revenueBand} revenue`
+    ? `Score ${item.score}/100`
     : `Health ${item.health}/100 · ${item.verdict}`;
 
   document.querySelector("#hexPanel h3").textContent = title;
@@ -2534,87 +2547,69 @@ function drawPlannerMarkers(data, lookups = {}) {
   if (map && !bounds.isEmpty()) map.fitBounds(bounds);
 }
 
-async function estimateRevenue(li) {
-  const out = li.querySelector(".rev-out");
-  const btn = li.querySelector(".rev-btn");
-  out.classList.remove("hidden");
-  out.innerHTML = `<span class="muted">Estimating…</span>`;
-  btn.disabled = true;
-  try {
-    const resp = await fetch(`${RUN}/site-revenue`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        vertical: document.getElementById("plannerVertical").value,
-        lat: parseFloat(li.dataset.lat), lng: parseFloat(li.dataset.lng),
-        competitorCount: parseInt(li.dataset.comp || "0", 10),
-        footfallIndex: parseInt(li.dataset.foot || "50", 10),
-      }),
-    });
-    const d = await resp.json();
-    if (!d.available) { out.innerHTML = `<span class="muted">No reliable estimate available.</span>`; return; }
-    // Keep it short: the ₹ range + a single key assumption line.
-    const keyAssume = (d.assumptions || [])[0];
-    out.innerHTML = `
-      <div class="rev-amount">${escapeHtml(d.monthlyRevenueRange)} <span class="rev-conf">· AI estimate</span></div>
-      ${keyAssume ? `<div class="rev-note">${escapeHtml(keyAssume)}</div>` : ""}`;
-  } catch (e) {
-    out.innerHTML = `<span class="status error">${e.message}</span>`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 // ============================================================================
 // LOAN ASSESSOR — geographic collateral check (decision-support, not a verdict)
 // ============================================================================
 let loanMarker = null;
+let loanPinMode = false;       // map-click drops the collateral pin
+let loanPinned = null;         // { lat, lng } chosen via pin
 
 function setupLoan() {
   const btn = document.getElementById("loanRunBtn");
   if (btn) btn.onclick = runLoanAnalysis;
+  const pinBtn = document.getElementById("loanPinBtn");
+  if (pinBtn) pinBtn.onclick = toggleLoanPinMode;
 }
 
-const LOAN_PROGRESS_ITEMS = [
-  "Locating the collateral",
-  "Reading the surrounding area",
-  "Checking water & flood context",
-  "Scanning nearby business health & reviews",
-  "Estimating a rough value band",
-  "Compiling the geographic read",
-];
-let _lnTimer = null, _lnIdx = 0;
-function startLoanProgress() {
-  const panel = document.getElementById("loanProgress");
-  panel.classList.remove("hidden");
-  _lnIdx = 0;
-  panel.innerHTML = `
-    <div class="progress-title"><i class="uil uil-hourglass"></i>Assessing the location</div>
-    <ul class="progress-list">
-      ${LOAN_PROGRESS_ITEMS.map((label, i) => `
-        <li id="ln-${i}" class="${i === 0 ? "running" : "pending"}">
-          <span class="ps-icon">${i === 0 ? '<span class="spinner"></span>' : "○"}</span>
-          <span class="ps-label">${label}</span>
-        </li>`).join("")}
-    </ul>`;
-  clearTimeout(_lnTimer);
-  const advance = () => {
-    if (_lnIdx >= LOAN_PROGRESS_ITEMS.length - 1) return;
-    const d = document.getElementById(`ln-${_lnIdx}`);
-    if (d) { d.className = "done"; d.querySelector(".ps-icon").textContent = "✓"; }
-    _lnIdx++;
-    const r = document.getElementById(`ln-${_lnIdx}`);
-    if (r) { r.className = "running"; r.querySelector(".ps-icon").innerHTML = '<span class="spinner"></span>'; }
-    _lnTimer = setTimeout(advance, 1600);
-  };
-  _lnTimer = setTimeout(advance, 1600);
-}
-function finishLoanProgress() {
-  clearTimeout(_lnTimer);
-  for (let i = 0; i < LOAN_PROGRESS_ITEMS.length; i++) {
-    const li = document.getElementById(`ln-${i}`);
-    if (li) { li.className = "done"; li.querySelector(".ps-icon").textContent = "✓"; }
+function toggleLoanPinMode() {
+  loanPinMode = !loanPinMode;
+  document.getElementById("loanPinHint").classList.toggle("hidden", !loanPinMode);
+  document.getElementById("loanPinLabel").textContent = loanPinMode ? "Click the map… (or cancel)" : "Or drop a pin on the map";
+  const mapEl = document.getElementById("map");
+  if (mapEl) mapEl.classList.toggle("loan-pin-active", loanPinMode);
+  if (loanPinMode && map && !map.__loanClickBound) {
+    map.addListener("click", (e) => {
+      if (!loanPinMode) return;
+      setLoanPin(e.latLng.lat(), e.latLng.lng());
+    });
+    map.__loanClickBound = true;
   }
-  setTimeout(() => document.getElementById("loanProgress").classList.add("hidden"), 450);
+}
+
+function setLoanPin(lat, lng) {
+  loanPinned = { lat, lng };
+  loanPinMode = false;
+  document.getElementById("loanPinHint").classList.add("hidden");
+  document.getElementById("loanPinLabel").textContent = `📍 Pin set (${lat.toFixed(4)}, ${lng.toFixed(4)}) — tap to change`;
+  document.getElementById("loanLocation").value = "";
+  document.getElementById("map").classList.remove("loan-pin-active");
+  if (loanMarker) loanMarker.setMap(null);
+  loanMarker = new google.maps.Marker({
+    position: { lat, lng }, map,
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#1a00d9", fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" },
+  });
+}
+
+// ---- Center loading overlay with cycling messages (reusable) ----
+let _ovTimer = null;
+function showLoadingOverlay(title, steps) {
+  const ov = document.getElementById("loadingOverlay");
+  ov.classList.remove("hidden");
+  document.getElementById("loadingTitle").textContent = title;
+  let i = 0;
+  const sub = document.getElementById("loadingSub");
+  const tick = () => {
+    sub.style.animation = "none"; void sub.offsetWidth; sub.style.animation = "";
+    sub.textContent = steps[i % steps.length];
+    i++;
+  };
+  tick();
+  clearInterval(_ovTimer);
+  _ovTimer = setInterval(tick, 2200);
+}
+function hideLoadingOverlay() {
+  clearInterval(_ovTimer);
+  document.getElementById("loadingOverlay").classList.add("hidden");
 }
 
 async function runLoanAnalysis() {
@@ -2622,25 +2617,38 @@ async function runLoanAnalysis() {
   const location = document.getElementById("loanLocation").value.trim();
   const status = document.getElementById("loanStatus");
   const btn = document.getElementById("loanRunBtn");
-  if (!location) { status.textContent = "Enter the collateral location."; status.className = "status error"; return; }
+  if (!location && !loanPinned) { status.textContent = "Enter an address or drop a pin on the map."; status.className = "status error"; return; }
   status.textContent = ""; status.className = "status";
   btn.disabled = true;
   document.getElementById("loanResult").classList.add("hidden");
-  startLoanProgress();
+  showLoadingOverlay("Assessing the location…", [
+    "Locating the collateral…",
+    "Reading the surrounding area…",
+    "Checking water & flood context…",
+    "Scanning nearby business health & reviews…",
+    "Estimating a rough value band…",
+    "Compiling the geographic read…",
+  ]);
 
   try {
+    const body = loanPinned
+      ? { collateralType, lat: loanPinned.lat, lng: loanPinned.lng }
+      : { collateralType, location };
     const resp = await fetch(`${RUN}/loan-analysis`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collateralType, location }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error(await resp.text());
     const a = await resp.json();
-    finishLoanProgress();
+    hideLoadingOverlay();
+    if (a && a.error) throw new Error(a.error);
     renderLoanAnalysis(a);
-    status.textContent = "";
+    status.textContent = "✓ Geographic read ready.";
+    status.className = "status ok";
   } catch (e) {
-    finishLoanProgress();
-    status.textContent = `Error: ${e.message}`;
+    hideLoadingOverlay();
+    console.error("loan analysis failed:", e);
+    status.textContent = `Could not analyse that location: ${e.message}`;
     status.className = "status error";
   } finally {
     btn.disabled = false;
