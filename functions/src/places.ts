@@ -68,6 +68,71 @@ export async function searchPlaces(opts: {
   })).filter((p: Poi) => p.lat && p.lng);
 }
 
+// Richer place data for the on-demand DEEP analysis: actual review snippets,
+// editorial summary, opening hours and price level. Heavier field mask, so used
+// only per-click (not in the fast batch path).
+export interface RichPlace extends Poi {
+  editorialSummary?: string;
+  reviews?: { text: string; rating?: number }[];
+  openNow?: boolean;
+  address?: string;
+}
+
+export async function richPlacesNearby(opts: {
+  query: string;
+  centerLat: number;
+  centerLng: number;
+  radiusM?: number;
+  maxResults?: number;
+}): Promise<RichPlace[]> {
+  const radius = opts.radiusM ?? 1500;
+  const max = opts.maxResults ?? 8;
+  if (!KEY()) throw new Error("GOOGLE_MAPS_SERVER_KEY not set");
+
+  const resp = await axios.post(
+    PLACES_BASE,
+    {
+      textQuery: opts.query,
+      maxResultCount: max,
+      locationBias: { circle: { center: { latitude: opts.centerLat, longitude: opts.centerLng }, radius } },
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": KEY(),
+        // Review text + editorial summary + hours are the high-signal fields.
+        "X-Goog-FieldMask": [
+          "places.id", "places.displayName", "places.location", "places.rating",
+          "places.userRatingCount", "places.priceLevel", "places.businessStatus",
+          "places.primaryType", "places.formattedAddress", "places.editorialSummary",
+          "places.regularOpeningHours.openNow", "places.reviews",
+        ].join(","),
+      },
+      timeout: 18_000,
+    },
+  );
+
+  const places = resp.data?.places ?? [];
+  return places.map((p: any) => ({
+    id: p.id,
+    name: p.displayName?.text ?? "Unknown",
+    lat: p.location?.latitude,
+    lng: p.location?.longitude,
+    rating: p.rating,
+    userRatings: p.userRatingCount,
+    priceLevel: p.priceLevel,
+    businessStatus: p.businessStatus,
+    primaryType: p.primaryType,
+    address: p.formattedAddress,
+    editorialSummary: p.editorialSummary?.text,
+    openNow: p.regularOpeningHours?.openNow,
+    reviews: (p.reviews ?? []).slice(0, 3).map((r: any) => ({
+      text: r.text?.text ?? r.originalText?.text ?? "",
+      rating: r.rating,
+    })).filter((r: any) => r.text),
+  })).filter((p: RichPlace) => p.lat && p.lng);
+}
+
 // Pull competitor POIs by category for a circular area.
 export async function competitorsInArea(opts: {
   category: string;      // e.g. "ATM", "bank", "supermarket"

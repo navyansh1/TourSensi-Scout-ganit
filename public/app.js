@@ -217,6 +217,11 @@ function bindUI() {
   document.getElementById("importBtn").onclick = () => document.getElementById("importModal").classList.remove("hidden");
   document.getElementById("importClose").onclick = () => document.getElementById("importModal").classList.add("hidden");
   document.getElementById("importFile").onchange = onImportFile;
+
+  // Mode toggle (Site Finder ↔ Expansion Planner ↔ Loan Assessor) + wiring
+  setupModeToggle();
+  setupPlanner();
+  setupLoan();
   const execBtn = document.getElementById("execBtn");
   if (execBtn) execBtn.onclick = openExecModal;
   document.getElementById("execClose").onclick = () => document.getElementById("execModal").classList.add("hidden");
@@ -2015,6 +2020,16 @@ async function onImportFile(e) {
   });
   if (!resp.ok) { status.textContent = `Error: ${await resp.text()}`; status.className = "status error"; return; }
   const data = await resp.json();
+
+  // If the upload was triggered from Expansion Planner, route the mapped
+  // locations there instead of plotting them as finder-mode imports.
+  if (window.__plannerImportTarget) {
+    window.__plannerImportTarget = false;
+    e.target.value = ""; // allow re-uploading the same file later
+    onPlannerLocations(data.locations || []);
+    return;
+  }
+
   status.textContent = `✓ Imported ${data.count} locations. Column mapping:`;
   status.className = "status ok";
   const out = document.getElementById("importResult");
@@ -2096,4 +2111,575 @@ function brandMapStyle() {
     { featureType: "water", elementType: "geometry", stylers: [{ color: "#dde7f5" }] },
     { featureType: "transit", stylers: [{ visibility: "off" }] },
   ];
+}
+
+// ============================================================================
+// EXPANSION PLANNER ("My Network" mode)
+// Upload your network once → score every site, flag weak ones, find gaps.
+// Reuses the existing /import endpoint for column-mapping, then posts the
+// mapped locations to /portfolio (the fast "Lite" path on the backend).
+// ============================================================================
+
+let plannerLocations = [];   // mapped {name, lat, lng, branchId, type} awaiting analysis
+let plannerMarkers = [];      // map markers drawn in planner mode
+let plannerResultData = null; // last /portfolio response
+let plannerAnalysisCache = {}; // keyed by "lat,lng" → cached deep AI analysis (no re-fetch on revisit)
+
+function setupModeToggle() {
+  const toggle = document.getElementById("modeToggle");
+  if (!toggle) return;
+  toggle.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.onclick = () => {
+      toggle.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const mode = btn.dataset.mode;
+      document.getElementById("finderMode").classList.toggle("hidden", mode !== "finder");
+      document.getElementById("plannerMode").classList.toggle("hidden", mode !== "planner");
+      document.getElementById("loanMode").classList.toggle("hidden", mode !== "loan");
+      // Keep the map controls relevant; each mode draws its own markers.
+      if (mode === "finder") clearPlannerMap();
+      else clearFinderMapForPlanner();
+      if (mode !== "planner") clearPlannerMap();
+    };
+  });
+}
+
+function clearFinderMapForPlanner() {
+  // Hide finder overlays so planner markers read cleanly (non-destructive — the
+  // finder repaints on its next Analyze run).
+  for (const p of hexPolygons) p.setMap(null);
+  for (const m of markers) m.setMap && m.setMap(null);
+}
+
+function clearPlannerMap() {
+  for (const m of plannerMarkers) { if (m.setMap) m.setMap(null); }
+  plannerMarkers = [];
+}
+
+function setupPlanner() {
+  const importBtn = document.getElementById("plannerImportBtn");
+  const runBtn = document.getElementById("plannerRunBtn");
+  if (importBtn) {
+    importBtn.onclick = () => {
+      // Reuse the existing import modal, but route its result into the planner.
+      window.__plannerImportTarget = true;
+      document.getElementById("importModal").classList.remove("hidden");
+    };
+  }
+  if (runBtn) runBtn.onclick = runPlanner;
+}
+
+// Called from onImportFile when an upload completes while in planner mode.
+function onPlannerLocations(locations) {
+  plannerLocations = (locations || []).filter(l => l.lat != null && l.lng != null);
+  const status = document.getElementById("plannerStatus");
+  const runBtn = document.getElementById("plannerRunBtn");
+  const countEl = document.getElementById("plannerCount");
+  if (!plannerLocations.length) {
+    status.textContent = "No locations with coordinates found in that file.";
+    status.className = "status error";
+    return;
+  }
+  if (countEl) countEl.textContent = plannerLocations.length;
+  runBtn.classList.remove("hidden");
+  status.textContent = `✓ Loaded ${plannerLocations.length} of your existing locations. Click "Find where to expand".`;
+  status.className = "status ok";
+  document.getElementById("importModal").classList.add("hidden");
+
+  // Plot the raw uploaded sites immediately (green) so the user sees them
+  // before running the scoring pass.
+  clearPlannerMap();
+  const bounds = new google.maps.LatLngBounds();
+  plannerLocations.forEach(p => {
+    const m = new google.maps.Marker({
+      position: { lat: p.lat, lng: p.lng }, map,
+      title: p.name,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7,
+        fillColor: "#22c55e", fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" },
+    });
+    m.addListener("click", () => {
+      infoWindow.setContent(`<div style="font-family:Inter,sans-serif;padding:6px;min-width:150px;">
+        <div style="font-size:11px;font-weight:700;color:#22c55e;text-transform:uppercase;">Your site</div>
+        <div style="font-size:13px;font-weight:600;">${escapeHtml(p.name)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;font-family:monospace;">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</div></div>`);
+      infoWindow.open(map, m);
+    });
+    plannerMarkers.push(m);
+    // Name label beside the dot.
+    const lbl = makeHTMLLabel({ lat: p.lat, lng: p.lng }, p.name, "marker-label own", true);
+    lbl.setMap(map);
+    plannerMarkers.push(lbl);
+    bounds.extend({ lat: p.lat, lng: p.lng });
+  });
+  if (map && !bounds.isEmpty()) map.fitBounds(bounds);
+}
+
+// Expansion-themed checklist wording (mirrors the Site Finder progress design).
+const PLANNER_PROGRESS_ITEMS = [
+  "Mapping your existing network",
+  "Measuring each site's catchment & footfall",
+  "Reading competitor presence around you",
+  "Pulling area population & demographics",
+  "Finding gaps your network doesn't cover",
+  "Validating demand in those gaps",
+  "Ranking the best places to expand",
+];
+let _plTickTimer = null, _plTickIdx = 0;
+
+function startPlannerProgress() {
+  const panel = document.getElementById("plannerProgress");
+  panel.classList.remove("hidden");
+  _plTickIdx = 0;
+  panel.innerHTML = `
+    <div class="progress-title"><i class="uil uil-hourglass"></i>Preparing your expansion plan</div>
+    <ul class="progress-list">
+      ${PLANNER_PROGRESS_ITEMS.map((label, i) => `
+        <li id="pp-${i}" class="${i === 0 ? "running" : "pending"}">
+          <span class="ps-icon">${i === 0 ? '<span class="spinner"></span>' : "○"}</span>
+          <span class="ps-label">${label}</span>
+        </li>`).join("")}
+    </ul>`;
+  clearTimeout(_plTickTimer);
+  const STEP_MS = 2600;
+  const advance = () => {
+    if (_plTickIdx >= PLANNER_PROGRESS_ITEMS.length - 1) return; // hold last for result
+    const done = document.getElementById(`pp-${_plTickIdx}`);
+    if (done) { done.className = "done"; done.querySelector(".ps-icon").textContent = "✓"; }
+    _plTickIdx++;
+    const run = document.getElementById(`pp-${_plTickIdx}`);
+    if (run) { run.className = "running"; run.querySelector(".ps-icon").innerHTML = '<span class="spinner"></span>'; }
+    _plTickTimer = setTimeout(advance, STEP_MS);
+  };
+  _plTickTimer = setTimeout(advance, STEP_MS);
+}
+
+function finishPlannerProgress() {
+  clearTimeout(_plTickTimer);
+  for (let i = 0; i < PLANNER_PROGRESS_ITEMS.length; i++) {
+    const li = document.getElementById(`pp-${i}`);
+    if (li) { li.className = "done"; li.querySelector(".ps-icon").textContent = "✓"; }
+  }
+  setTimeout(() => document.getElementById("plannerProgress").classList.add("hidden"), 450);
+}
+
+async function runPlanner() {
+  const vertical = document.getElementById("plannerVertical").value;
+  const status = document.getElementById("plannerStatus");
+  const runBtn = document.getElementById("plannerRunBtn");
+  status.textContent = "";
+  status.className = "status";
+  runBtn.disabled = true;
+  plannerAnalysisCache = {}; // fresh run → drop any cached per-site analyses
+  startPlannerProgress();
+
+  try {
+    const resp = await fetch(`${RUN}/portfolio`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vertical, locations: plannerLocations }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    plannerResultData = data;
+    finishPlannerProgress();
+    renderPlanner(data);
+    status.textContent = `✓ ${data.gaps.length} places to expand · ${data.regional.weakCount} weak site(s) in your network.`;
+    status.className = "status ok";
+  } catch (e) {
+    finishPlannerProgress();
+    status.textContent = `Error: ${e.message}`;
+    status.className = "status error";
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+function healthColor(v) {
+  if (v >= 60) return "#16a34a";
+  if (v >= 42) return "#facc15";
+  return "#dc2626";
+}
+
+function renderPlanner(data) {
+  document.getElementById("plannerResult").classList.remove("hidden");
+
+  // Headline stats
+  const r = data.regional;
+  document.getElementById("plannerStats").innerHTML = `
+    <div class="pstat"><div class="pstat-num">${data.sites.length}</div><div class="pstat-lbl">Your sites</div></div>
+    <div class="pstat"><div class="pstat-num">${r.avgHealth}</div><div class="pstat-lbl">Avg health</div></div>
+    <div class="pstat"><div class="pstat-num" style="color:#dc2626">${r.weakCount}</div><div class="pstat-lbl">Weak sites</div></div>
+    <div class="pstat"><div class="pstat-num">${data.gaps.length}</div><div class="pstat-lbl">Expand here</div></div>
+  `;
+
+  // Revenue framing only makes sense for retail/warehouse — not ATMs/branches.
+  const showRevenue = data.vertical === "FMCG_RETAIL" || data.vertical === "FMCG_WAREHOUSE";
+
+  // Gaps list — SCANNABLE summary cards. Top positive factors as compact chips;
+  // full reasoning + strategist's take live in the right-side panel on click.
+  const gapList = document.getElementById("gapList");
+  gapList.innerHTML = data.gaps.map(g => {
+    // Lead with the strongest 3 positive signals as one-line chips.
+    const chips = (g.factors || [])
+      .filter(f => f.impact === "positive")
+      .slice(0, 3)
+      .map(f => `<span class="gap-chip">${escapeHtml(f.label)}</span>`).join("");
+    // Name the actual nearby places (not generic categories) and link each to Maps.
+    const dist = (m) => m >= 1000 ? (m / 1000).toFixed(1) + " km" : m + " m";
+    const anchorLine = (g.nearbyAnchors || []).length
+      ? `<div class="gap-line">📍 Near ${g.nearbyAnchors.slice(0, 3).map(a =>
+          `<a class="gmaps-inline" href="${gmapsUrl(a)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${escapeHtml(a.name)}</a> <span class="pa-dist">(${escapeHtml(a.label)}, ${dist(a.meters)})</span>`
+        ).join(" · ")}</div>` : "";
+    return `
+    <li class="rec-item planner-item gap-card" data-kind="gap" data-lat="${g.lat}" data-lng="${g.lng}"
+        data-comp="${g.competitorCount}" data-foot="${g.footfallIndex}">
+      <div class="rec-head">
+        <span class="rec-rank">#${g.rank}</span>
+        <span class="rec-score">Score ${g.score}/100</span>
+        ${showRevenue ? `<span class="rev-band band-${g.revenueBand.toLowerCase()}">${g.revenueBand} revenue</span>` : ""}
+      </div>
+      <div class="gap-line">🏬 ${g.competitorCount} competitor(s) nearby · ${g.nearestOwnKm} km from your closest site</div>
+      ${anchorLine}
+      <div class="gap-chips">${chips}</div>
+      <div class="gap-tap">Tap for full AI analysis →</div>
+      ${showRevenue ? `<button class="ghost mini rev-btn">💰 Estimate revenue (AI)</button><div class="rev-out hidden"></div>` : ""}
+    </li>`;
+  }).join("") || `<li class="rec-empty">No clear expansion gaps in this region — your network already covers the demand, or there isn't enough footfall around the uncovered areas.</li>`;
+
+  // Sites list (weakest first)
+  const sites = [...data.sites].sort((a, b) => a.health - b.health);
+  const siteList = document.getElementById("siteList");
+  siteList.innerHTML = sites.map(s => `
+    <li class="rec-item planner-item" data-kind="site" data-lat="${s.lat}" data-lng="${s.lng}"
+        data-comp="${s.competitorCount}" data-foot="${s.footfallIndex}">
+      <div class="rec-head">
+        <span class="health-dot" style="background:${healthColor(s.health)}"></span>
+        <span class="rec-rank">${escapeHtml(s.name)}</span>
+        <span class="rec-score">${s.verdict}</span>
+      </div>
+      <div class="planner-foot">Health ${s.health}/100 · footfall ${s.footfallIndex}/100 · ${s.competitorCount} competitors${s.avgCompetitorRating != null ? ` · avg ★${s.avgCompetitorRating.toFixed(1)}` : ""}</div>
+      <div class="rec-reason">${escapeHtml(s.note)}</div>
+    </li>`).join("");
+
+  // Per-item interactions: glide map, open right-side AI analysis, revenue est.
+  const gapByKey = {}; const siteByKey = {};
+  data.gaps.forEach(g => { gapByKey[`${g.lat},${g.lng}`] = g; });
+  data.sites.forEach(s => { siteByKey[`${s.lat},${s.lng}`] = s; });
+
+  document.querySelectorAll(".planner-item").forEach(li => {
+    const lat = parseFloat(li.dataset.lat), lng = parseFloat(li.dataset.lng);
+    li.addEventListener("click", (e) => {
+      if (e.target.classList.contains("rev-btn")) return;
+      if (map) { map.panTo({ lat, lng }); map.setZoom(15); }
+      const key = `${lat},${lng}`;
+      const kind = li.dataset.kind;
+      openPlannerAnalysis(kind, kind === "gap" ? gapByKey[key] : siteByKey[key]);
+    });
+    const revBtn = li.querySelector(".rev-btn");
+    if (revBtn) revBtn.onclick = () => estimateRevenue(li);
+  });
+
+  drawPlannerMarkers(data, { gapByKey, siteByKey });
+}
+
+// Open the right-side panel and run the deep AI analysis for a clicked
+// site/gap, reusing the existing #hexPanel shell that Site Finder uses.
+async function openPlannerAnalysis(kind, item) {
+  if (!item) return;
+  const panel = document.getElementById("hexPanel");
+  panel.classList.remove("hidden");
+  const verticalSel = document.getElementById("plannerVertical").value;
+  const accent = kind === "gap" ? "#1a00d9" : healthColor(item.health);
+  const title = kind === "gap" ? `Expansion target #${item.rank}` : escapeHtml(item.name);
+  const scoreLine = kind === "gap"
+    ? `Score ${item.score}/100 · ${item.revenueBand} revenue`
+    : `Health ${item.health}/100 · ${item.verdict}`;
+
+  document.querySelector("#hexPanel h3").textContent = title;
+
+  // Cache hit → render instantly, no re-fetch on revisit.
+  const cacheKey = `${kind}:${item.lat},${item.lng}`;
+  if (plannerAnalysisCache[cacheKey]) {
+    document.getElementById("hexBody").innerHTML =
+      `<div style="margin-bottom:12px"><span class="final-pill" style="background:${accent}">${scoreLine}</span></div><div id="paWrap"></div>`;
+    renderSiteAnalysis(plannerAnalysisCache[cacheKey], accent);
+    return;
+  }
+
+  document.getElementById("hexBody").innerHTML = `
+    <div style="margin-bottom:12px"><span class="final-pill" style="background:${accent}">${scoreLine}</span></div>
+    <div id="paWrap" class="zone-insight loading">
+      <div class="zi-spinner"><span class="spinner"></span> Deep-analysing with AI — reading nearby reviews & running grounded searches (~5-8s)…</div>
+    </div>`;
+
+  try {
+    const resp = await fetch(`${RUN}/site-analysis`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vertical: verticalSel, lat: item.lat, lng: item.lng,
+        kind, name: item.name,
+        footfallIndex: item.footfallIndex, score: item.score,
+        competitorCount: item.competitorCount,
+        nearestOwnKm: item.nearestOwnKm,
+        populationDensity: item.populationDensity,
+      }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const a = await resp.json();
+    plannerAnalysisCache[cacheKey] = a;  // cache for instant revisit
+    renderSiteAnalysis(a, accent);
+  } catch (e) {
+    const w = document.getElementById("paWrap");
+    if (w) w.innerHTML = `<span class="status error">Analysis failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderSiteAnalysis(a, accent) {
+  const verdictColor = { OPEN: "#16a34a", CONSIDER: "#d97706", AVOID: "#dc2626" }[a.verdict] || accent;
+  const list = (arr) => (arr || []).slice(0, 4).map(x => `<li>${mdBold(x)}</li>`).join("");
+
+  // Competitors as compact rows — name links to Google Maps.
+  const comps = (a.evidence?.competitors || []).filter(c => c.name).slice(0, 4).map(c => `
+    <div class="pa-comp">
+      <a class="pa-comp-name gmaps-inline" href="${gmapsUrl(c)}" target="_blank" rel="noopener">${escapeHtml(c.name)} ↗</a>
+      ${c.rating != null ? `<span class="pa-comp-meta">★${c.rating} · ${c.reviews ?? 0}${c.status && c.status !== "OPERATIONAL" ? " · " + escapeHtml(c.status.replace(/_/g, " ").toLowerCase()) : ""}</span>` : ""}
+    </div>`).join("");
+  // Anchors → "what" is named AND linked to Google Maps.
+  const anchors = (a.evidence?.anchors || []).slice(0, 5).map(an =>
+    `<li><strong>${escapeHtml(an.label)}:</strong> <a class="gmaps-inline" href="${gmapsUrl(an)}" target="_blank" rel="noopener">${escapeHtml(an.name)} ↗</a> <span class="pa-dist">${an.meters >= 1000 ? (an.meters/1000).toFixed(1)+" km" : an.meters+" m"}</span></li>`).join("");
+  const src = (a.sources || []).map(s => `<a href="${s.uri}" target="_blank" rel="noopener">${escapeHtml(s.title || "source")} ↗</a>`).join(" · ");
+
+  // Property / rental cost block (AI + Google search, from the backend).
+  const p = a.propertyCost;
+  const propHTML = p && (p.ratePerSqft || p.monthlyRent || p.note) ? `
+    <div class="pa-h">💰 Property & rent</div>
+    <div class="pa-prop">
+      ${p.ratePerSqft ? `<div class="pa-prop-row"><span>Rate</span><strong>${escapeHtml(p.ratePerSqft)}</strong></div>` : ""}
+      ${p.monthlyRent ? `<div class="pa-prop-row"><span>Typical rent</span><strong>${escapeHtml(p.monthlyRent)}</strong></div>` : ""}
+      ${p.buyPrice ? `<div class="pa-prop-row"><span>Buy price</span><strong>${escapeHtml(p.buyPrice)}</strong></div>` : ""}
+      ${p.note ? `<div class="pa-prop-note">${escapeHtml(p.note)}</div>` : ""}
+    </div>` : "";
+
+  document.getElementById("paWrap").outerHTML = `
+    <div class="pa">
+      <div class="pa-verdict" style="background:${verdictColor}">${a.verdict}</div>
+      <div class="pa-locality">${escapeHtml(a.locality)}</div>
+      ${a.headline ? `<div class="pa-headline">${escapeHtml(a.headline)}</div>` : ""}
+
+      ${a.demandDrivers?.length ? `<div class="pa-h">Why here</div><ul class="pa-list">${list(a.demandDrivers)}</ul>` : ""}
+
+      ${(a.competitiveBullets?.length || a.competitiveRead) ? `<div class="pa-h">Competition</div><ul class="pa-list">${a.competitiveBullets?.length ? list(a.competitiveBullets) : `<li>${mdBold(a.competitiveRead)}</li>`}</ul>` : ""}
+
+      ${(a.demographicBullets?.length || a.demographicRead) ? `<div class="pa-h">Who's here</div><ul class="pa-list">${a.demographicBullets?.length ? list(a.demographicBullets) : `<li>${mdBold(a.demographicRead)}</li>`}</ul>` : ""}
+
+      ${a.risks?.length ? `<div class="pa-h">Risks</div><ul class="pa-list pa-risks">${list(a.risks)}</ul>` : ""}
+
+      ${propHTML}
+
+      ${a.bottomLine ? `<div class="pa-bottom">${escapeHtml(a.bottomLine)}</div>` : ""}
+      ${comps ? `<div class="pa-h">Competitors nearby</div><div class="pa-comps">${comps}</div>` : ""}
+      ${anchors ? `<div class="pa-h">What's around</div><ul class="pa-list pa-anchors">${anchors}</ul>` : ""}
+      ${src ? `<div class="pa-sources">Sources: ${src}</div>` : ""}
+    </div>`;
+}
+
+function drawPlannerMarkers(data, lookups = {}) {
+  clearPlannerMap();
+  const bounds = new google.maps.LatLngBounds();
+
+  // Draw only the SINGLE hex of each suggested expansion spot (not the whole
+  // regional grid) — a focused cell highlighting exactly where to open.
+  data.gaps.forEach(g => {
+    if (!g.hex) return;
+    const boundary = window.h3.cellToBoundary(g.hex, true);
+    const path = boundary.map(([lng, lat]) => ({ lat, lng }));
+    const color = scoreColor(g.score);
+    const poly = new google.maps.Polygon({
+      paths: path, strokeWeight: 2, strokeColor: color, strokeOpacity: 1,
+      fillColor: color, fillOpacity: 0.42,
+      zIndex: Math.round(g.score), map, clickable: false,
+    });
+    plannerMarkers.push(poly);
+  });
+
+  // Existing sites — colored by health.
+  data.sites.forEach(s => {
+    const m = new google.maps.Marker({
+      position: { lat: s.lat, lng: s.lng }, map,
+      title: `${s.name} — health ${s.health}/100 (${s.verdict})`,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7,
+        fillColor: healthColor(s.health), fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" },
+    });
+    m.addListener("click", () => openPlannerAnalysis("site", s));
+    plannerMarkers.push(m);
+    const lbl = makeHTMLLabel({ lat: s.lat, lng: s.lng }, s.name, "marker-label own", true);
+    lbl.setMap(map);
+    plannerMarkers.push(lbl);
+    bounds.extend({ lat: s.lat, lng: s.lng });
+  });
+
+  // Expansion gaps — numbered blue markers.
+  data.gaps.forEach(g => {
+    const m = new google.maps.Marker({
+      position: { lat: g.lat, lng: g.lng }, map,
+      title: `Expand #${g.rank} — score ${g.score}/100`,
+      label: { text: String(g.rank), color: "#fff", fontSize: "12px", fontWeight: "700" },
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12,
+        fillColor: "#1a00d9", fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" },
+    });
+    m.addListener("click", () => openPlannerAnalysis("gap", g));
+    plannerMarkers.push(m);
+    bounds.extend({ lat: g.lat, lng: g.lng });
+  });
+
+  if (map && !bounds.isEmpty()) map.fitBounds(bounds);
+}
+
+async function estimateRevenue(li) {
+  const out = li.querySelector(".rev-out");
+  const btn = li.querySelector(".rev-btn");
+  out.classList.remove("hidden");
+  out.innerHTML = `<span class="muted">Estimating…</span>`;
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${RUN}/site-revenue`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vertical: document.getElementById("plannerVertical").value,
+        lat: parseFloat(li.dataset.lat), lng: parseFloat(li.dataset.lng),
+        competitorCount: parseInt(li.dataset.comp || "0", 10),
+        footfallIndex: parseInt(li.dataset.foot || "50", 10),
+      }),
+    });
+    const d = await resp.json();
+    if (!d.available) { out.innerHTML = `<span class="muted">No reliable estimate available.</span>`; return; }
+    // Keep it short: the ₹ range + a single key assumption line.
+    const keyAssume = (d.assumptions || [])[0];
+    out.innerHTML = `
+      <div class="rev-amount">${escapeHtml(d.monthlyRevenueRange)} <span class="rev-conf">· AI estimate</span></div>
+      ${keyAssume ? `<div class="rev-note">${escapeHtml(keyAssume)}</div>` : ""}`;
+  } catch (e) {
+    out.innerHTML = `<span class="status error">${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ============================================================================
+// LOAN ASSESSOR — geographic collateral check (decision-support, not a verdict)
+// ============================================================================
+let loanMarker = null;
+
+function setupLoan() {
+  const btn = document.getElementById("loanRunBtn");
+  if (btn) btn.onclick = runLoanAnalysis;
+}
+
+const LOAN_PROGRESS_ITEMS = [
+  "Locating the collateral",
+  "Reading the surrounding area",
+  "Checking water & flood context",
+  "Scanning nearby business health & reviews",
+  "Estimating a rough value band",
+  "Compiling the geographic read",
+];
+let _lnTimer = null, _lnIdx = 0;
+function startLoanProgress() {
+  const panel = document.getElementById("loanProgress");
+  panel.classList.remove("hidden");
+  _lnIdx = 0;
+  panel.innerHTML = `
+    <div class="progress-title"><i class="uil uil-hourglass"></i>Assessing the location</div>
+    <ul class="progress-list">
+      ${LOAN_PROGRESS_ITEMS.map((label, i) => `
+        <li id="ln-${i}" class="${i === 0 ? "running" : "pending"}">
+          <span class="ps-icon">${i === 0 ? '<span class="spinner"></span>' : "○"}</span>
+          <span class="ps-label">${label}</span>
+        </li>`).join("")}
+    </ul>`;
+  clearTimeout(_lnTimer);
+  const advance = () => {
+    if (_lnIdx >= LOAN_PROGRESS_ITEMS.length - 1) return;
+    const d = document.getElementById(`ln-${_lnIdx}`);
+    if (d) { d.className = "done"; d.querySelector(".ps-icon").textContent = "✓"; }
+    _lnIdx++;
+    const r = document.getElementById(`ln-${_lnIdx}`);
+    if (r) { r.className = "running"; r.querySelector(".ps-icon").innerHTML = '<span class="spinner"></span>'; }
+    _lnTimer = setTimeout(advance, 1600);
+  };
+  _lnTimer = setTimeout(advance, 1600);
+}
+function finishLoanProgress() {
+  clearTimeout(_lnTimer);
+  for (let i = 0; i < LOAN_PROGRESS_ITEMS.length; i++) {
+    const li = document.getElementById(`ln-${i}`);
+    if (li) { li.className = "done"; li.querySelector(".ps-icon").textContent = "✓"; }
+  }
+  setTimeout(() => document.getElementById("loanProgress").classList.add("hidden"), 450);
+}
+
+async function runLoanAnalysis() {
+  const collateralType = document.getElementById("loanType").value;
+  const location = document.getElementById("loanLocation").value.trim();
+  const status = document.getElementById("loanStatus");
+  const btn = document.getElementById("loanRunBtn");
+  if (!location) { status.textContent = "Enter the collateral location."; status.className = "status error"; return; }
+  status.textContent = ""; status.className = "status";
+  btn.disabled = true;
+  document.getElementById("loanResult").classList.add("hidden");
+  startLoanProgress();
+
+  try {
+    const resp = await fetch(`${RUN}/loan-analysis`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collateralType, location }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const a = await resp.json();
+    finishLoanProgress();
+    renderLoanAnalysis(a);
+    status.textContent = "";
+  } catch (e) {
+    finishLoanProgress();
+    status.textContent = `Error: ${e.message}`;
+    status.className = "status error";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderLoanAnalysis(a) {
+  const sec = document.getElementById("loanResult");
+  sec.classList.remove("hidden");
+  const sigColor = { FAVOURABLE: "#16a34a", MIXED: "#d97706", UNFAVOURABLE: "#dc2626" }[a.geographicSignal] || "#d97706";
+  const list = (arr) => (arr || []).map(x => `<li>${mdBold(x)}</li>`).join("");
+  const closedPct = Math.round((a.evidence?.closedShare || 0) * 100);
+  const nearby = (a.evidence?.nearby || []).filter(n => n.name).slice(0, 5).map(n =>
+    `<div class="pa-comp"><a class="pa-comp-name gmaps-inline" href="${gmapsUrl(n)}" target="_blank" rel="noopener">${escapeHtml(n.name)} ↗</a>${n.rating != null ? `<span class="pa-comp-meta">★${n.rating} · ${n.reviews ?? 0}${n.status && n.status !== "OPERATIONAL" ? " · " + escapeHtml(n.status.replace(/_/g, " ").toLowerCase()) : ""}</span>` : ""}</div>`).join("");
+  const src = (a.sources || []).map(s => `<a href="${s.uri}" target="_blank" rel="noopener">${escapeHtml(s.title || "source")} ↗</a>`).join(" · ");
+
+  sec.innerHTML = `
+    <div class="pa">
+      <div class="pa-verdict" style="background:${sigColor}">${a.geographicSignal} (geographic)</div>
+      <div class="pa-locality">${escapeHtml(a.locality)}</div>
+      <div class="pa-headline">${escapeHtml(a.setting)}${a.valueBand ? ` · approx ${escapeHtml(a.valueBand)}` : ""}</div>
+
+      ${a.waterAndRisk?.length ? `<div class="pa-h">💧 Water & risk</div><ul class="pa-list">${list(a.waterAndRisk)}</ul>` : ""}
+      ${a.locationFactors?.length ? `<div class="pa-h">📍 Location</div><ul class="pa-list">${list(a.locationFactors)}</ul>` : ""}
+      ${a.commercialHealth?.length ? `<div class="pa-h">🏬 Area business health (${closedPct}% nearby shut)</div><ul class="pa-list">${list(a.commercialHealth)}</ul>` : ""}
+      ${a.redFlags?.length ? `<div class="pa-h">⚠️ Red flags</div><ul class="pa-list pa-risks">${list(a.redFlags)}</ul>` : ""}
+      ${a.summary ? `<div class="pa-bottom">${escapeHtml(a.summary)}</div>` : ""}
+      ${nearby ? `<div class="pa-h">Nearby businesses</div><div class="pa-comps">${nearby}</div>` : ""}
+      ${src ? `<div class="pa-sources">Sources: ${src}</div>` : ""}
+      <div class="loan-disclaimer compact">⚖️ Geographic decision-support only — not a lending verdict. No title/legal/credit checks performed.</div>
+    </div>`;
+
+  // Drop a pin + glide the map.
+  if (loanMarker) { loanMarker.setMap(null); loanMarker = null; }
+  if (map && a.lat != null && a.lng != null) {
+    loanMarker = new google.maps.Marker({
+      position: { lat: a.lat, lng: a.lng }, map,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: sigColor, fillOpacity: 1, strokeWeight: 2, strokeColor: "#fff" },
+    });
+    map.panTo({ lat: a.lat, lng: a.lng }); map.setZoom(15);
+  }
 }

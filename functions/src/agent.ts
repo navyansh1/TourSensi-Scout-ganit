@@ -128,6 +128,127 @@ Reply with ONLY JSON, no prose:
   }
 }
 
+// On-demand grounded revenue/footfall estimate for ONE site (used by the
+// Expansion Planner when the user clicks a specific existing site or gap). Kept
+// out of the batch path on purpose — one Gemini call per click, not per site.
+export interface AiSiteRevenue {
+  monthlyRevenueRange: string;   // e.g. "₹8–14 lakh / month"
+  footfallNote: string;          // short footfall sentence
+  reasoning: string;             // WHY this figure — the hypothesis behind it
+  assumptions: string[];         // the concrete assumptions the number rests on
+  confidence: "low" | "medium" | "high";
+  sources: { uri: string; title?: string }[];
+}
+
+export async function aiSiteRevenue(opts: {
+  vertical: string;
+  lat: number;
+  lng: number;
+  area?: string;
+  competitorCount: number;
+  footfallIndex: number;
+}): Promise<AiSiteRevenue | null> {
+  const model = vertex().getGenerativeModel({
+    model: "gemini-2.5-flash",
+    tools: [{ googleSearch: {} } as any],
+  });
+  const kind: Record<string, string> = {
+    BFSI_ATM: "a bank ATM", BFSI_BRANCH: "a bank branch",
+    FMCG_RETAIL: "a grocery/retail store", FMCG_WAREHOUSE: "a dark store / warehouse",
+  };
+  const what = kind[opts.vertical] ?? "this type of outlet";
+  const place = opts.area ? `${opts.area} (around ${opts.lat.toFixed(4)}, ${opts.lng.toFixed(4)})` : `${opts.lat.toFixed(4)}, ${opts.lng.toFixed(4)}`;
+  const prompt = `Using Google Search, estimate a realistic MONTHLY revenue range for ${what} located at ${place}, India.
+Context: about ${opts.competitorCount} similar businesses are nearby and the local footfall index is ${opts.footfallIndex}/100.
+
+First identify the real locality. Then build the estimate bottom-up from explicit assumptions (e.g. for an ATM: daily transactions × interchange fee; for a store: daily customers × average basket size × days). State those assumptions and the hypothesis behind the figure so a business owner understands HOW you arrived at it.
+
+Reply with ONLY JSON, no prose:
+{
+  "monthlyRevenueRange": "<short ₹ range, e.g. '₹8–14 lakh / month'>",
+  "footfallNote": "<one short sentence on expected footfall>",
+  "reasoning": "<2-3 sentences: the hypothesis and the math behind the number — why this range and not higher/lower>",
+  "assumptions": ["<concrete assumption 1, with numbers>", "<assumption 2>", "<assumption 3>"],
+  "confidence": "low|medium|high"
+}`;
+
+  try {
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const candidate: any = resp.response?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+    const meta = candidate?.groundingMetadata ?? {};
+    const sources: { uri: string; title?: string }[] = [];
+    for (const c of meta.groundingChunks ?? []) {
+      if (c.web?.uri) sources.push({ uri: c.web.uri, title: c.web.title });
+    }
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]);
+    if (!parsed.monthlyRevenueRange) return null;
+    return {
+      monthlyRevenueRange: String(parsed.monthlyRevenueRange).slice(0, 60),
+      footfallNote: String(parsed.footfallNote || "").slice(0, 200),
+      reasoning: String(parsed.reasoning || "").slice(0, 600),
+      assumptions: Array.isArray(parsed.assumptions)
+        ? parsed.assumptions.map((a: any) => String(a).slice(0, 160)).slice(0, 5)
+        : [],
+      confidence: ["low", "medium", "high"].includes(parsed.confidence) ? parsed.confidence : "low",
+      sources: sources.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Detailed, grounded "why this exact spot" narrative for an expansion gap.
+// Takes the already-computed signals so the model explains a real decision
+// rather than inventing one. Returns a few sentences of plain reasoning.
+export async function aiGapRationale(opts: {
+  vertical: string;
+  gap: {
+    lat: number; lng: number; score: number; footfallIndex: number;
+    competitorCount: number; nearestOwnKm: number;
+    revenueBand: string;
+    populationDensity: number | null;
+    nearbyAnchors: { label: string; name: string; meters: number }[];
+  };
+}): Promise<string | null> {
+  const model = vertex().getGenerativeModel({
+    model: "gemini-2.5-flash",
+    tools: [{ googleSearch: {} } as any],
+  });
+  const kind: Record<string, string> = {
+    BFSI_ATM: "a new ATM", BFSI_BRANCH: "a new bank branch",
+    FMCG_RETAIL: "a new grocery/retail store", FMCG_WAREHOUSE: "a new dark store / warehouse",
+  };
+  const g = opts.gap;
+  const what = kind[opts.vertical] ?? "a new outlet";
+  const anchors = g.nearbyAnchors.length
+    ? g.nearbyAnchors.map(a => `${a.label} "${a.name}" ${a.meters >= 1000 ? (a.meters / 1000).toFixed(1) + "km" : a.meters + "m"} away`).join(", ")
+    : "no major anchors detected nearby";
+  const prompt = `You are a location strategist explaining to a business why we recommend opening ${what} at coordinates ${g.lat.toFixed(4)}, ${g.lng.toFixed(4)} in India.
+
+Our model's signals for this spot:
+- Expansion score: ${g.score}/100
+- Footfall index: ${g.footfallIndex}/100
+- Population density: ${g.populationDensity != null ? g.populationDensity.toLocaleString("en-IN") + " people/km²" : "unknown"}
+- Competing sites within 1.2 km: ${g.competitorCount} (competition validates the market; too much would split share)
+- Distance from the client's nearest existing site: ${g.nearestOwnKm} km (so no cannibalisation)
+- Nearby demand anchors: ${anchors}
+- Revenue potential band: ${g.revenueBand}
+
+Use Google Search to identify the actual neighbourhood/locality at these coordinates and any real local context (metro, IT parks, residential growth, malls, recent development). Then write 3-5 SHORT sentences a business owner can act on, explaining WHY this exact spot is a good expansion target: the demand drivers, the competitive logic, the network fit, and one risk to watch. Name the real locality. Be specific and concrete, not generic. Do not use markdown headings or bullet symbols — plain sentences only.`;
+
+  try {
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const candidate: any = resp.response?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("").trim() ?? "";
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 // One mini-query per quadrant — gives spatial variation in the growth score.
 async function quadrantScore(area: string, city: string, label: string): Promise<{ growthScore: number; headline: string }> {
   const model = vertex().getGenerativeModel({

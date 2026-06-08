@@ -889,3 +889,125 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   line-height: 1.5;
   color: var(--text-2);
 }
+
+/* ===== Expansion Planner ("My Network" mode) ===== */
+.mode-toggle {
+  display: flex; gap: 6px; margin-bottom: 16px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px;
+}
+.mode-btn {
+  flex: 1; padding: 8px 6px; font-size: 12.5px; font-weight: 600;
+  border: none; background: transparent; color: var(--text-2);
+  border-radius: 7px; cursor: pointer; transition: all .15s;
+}
+.mode-btn:hover { color: var(--ganit-blue); }
+.mode-btn.active { background: var(--ganit-blue); color: #fff; }
+
+.planner-lede { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin: 4px 0 14px; }
+#plannerStats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 14px; }
+.pstat { background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 6px; text-align: center; }
+.pstat-num { font-size: 22px; font-weight: 800; color: var(--ganit-blue); line-height: 1; }
+.pstat-lbl { font-size: 10.5px; color: var(--text-2); margin-top: 4px; text-transform: uppercase; letter-spacing: .03em; }
+
+.planner-item { cursor: pointer; }
+.planner-foot { font-size: 11.5px; color: var(--text-2); margin-top: 4px; }
+.health-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; flex: 0 0 auto; }
+
+.rev-band { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 20px; margin-left: auto; }
+.band-premium { background: #ede9fe; color: #6d28d9; }
+.band-strong  { background: #dcfce7; color: #15803d; }
+.band-moderate{ background: #fef9c3; color: #a16207; }
+.band-low     { background: #fee2e2; color: #b91c1c; }
+
+.rev-btn { margin-top: 8px; }
+.rev-out { margin-top: 8px; font-size: 12px; }
+.rev-amount { font-weight: 700; color: var(--ganit-blue); font-size: 13.5px; }
+.rev-conf { font-weight: 500; color: var(--text-2); font-size: 11px; }
+.rev-note { color: var(--text-2); margin-top: 3px; line-height: 1.5; }
+.rec-empty { list-style: none; font-size: 12.5px; color: var(--text-2); padding: 10px; background: var(--bg-2); border-radius: 8px; }
+
+/* Planner list item head row (rec-head/rec-score not used by finder) */
+.planner-item .rec-head { display: flex; align-items: center; gap: 8px; }
+.planner-item .rec-rank { font-weight: 700; color: var(--text); font-size: 13px; }
+.rec-score { font-size: 11px; font-weight: 700; color: var(--text-2); }
+
+/* Planner action buttons — clear hierarchy + spacing (fixes the merged-block look) */
+.planner-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.planner-actions .ghost.block {
+  width: 100%; padding: 12px; font-size: 14px; font-weight: 600;
+  border: 1.5px solid var(--ganit-blue); color: var(--ganit-blue);
+  border-radius: 10px; background: #fff;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.planner-actions .ghost.block:hover { background: var(--bg-2); }
+.planner-actions .ghost.block i { font-size: 16px; }
+
+/* Gap "why here" detailed breakdown */
+.gap-card { padding-bottom: 12px; }
+.gap-rationale { background: rgba(26,0,217,0.05); border-left: 3px solid var(--ganit-blue);
+  border-radius: 6px; padding: 9px 11px; margin: 8px 0; font-size: 12.5px; line-height: 1.55; color: var(--text); }
+.gap-rationale-h { font-size: 11px; font-weight: 700; color: var(--ganit-blue); margin-bottom: 4px; }
+.gap-why-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--text-2); margin: 10px 0 6px; }
+.factor-list { display: flex; flex-direction: column; gap: 5px; }
+.factor-row { display: flex; gap: 7px; font-size: 12px; line-height: 1.45; align-items: flex-start; }
+.factor-ic { flex: 0 0 auto; }
+.factor-label { font-weight: 600; color: var(--text); }
+.factor-value { color: var(--text); }
+.factor-weight { color: var(--text-2); font-style: italic; }
+.factor-negative .factor-value { color: #b45309; }
+
+/* Revenue estimate reasoning */
+.rev-reasoning { margin-top: 6px; font-size: 12px; line-height: 1.55; color: var(--text); }
+.rev-assume-h { font-size: 11px; font-weight: 700; color: var(--text-2); margin: 7px 0 3px; text-transform: uppercase; letter-spacing: .03em; }
+.rev-assume { margin: 0; padding-left: 18px; font-size: 11.5px; color: var(--text-2); line-height: 1.5; }
+.rev-assume li { margin-bottom: 2px; }
+
+/* Planner deep AI analysis (right-side panel) */
+.pa { font-size: 12.5px; line-height: 1.55; }
+.pa-verdict { display: inline-block; color: #fff; font-weight: 800; font-size: 12px;
+  padding: 3px 12px; border-radius: 20px; letter-spacing: .04em; }
+.pa-locality { font-size: 15px; font-weight: 700; color: var(--text); margin-top: 8px; }
+.pa-headline { font-size: 13px; color: var(--text); margin-top: 3px; font-weight: 500; }
+.pa-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--text-2); margin: 13px 0 5px; }
+.pa-list { margin: 0; padding-left: 18px; }
+.pa-list li { margin-bottom: 3px; }
+.pa-risks li { color: #b45309; }
+.pa-text { color: var(--text); }
+.pa-bottom { margin-top: 12px; font-weight: 600; color: var(--ganit-blue);
+  background: rgba(26,0,217,0.06); border-radius: 8px; padding: 9px 11px; line-height: 1.5; }
+.pa-comp { border-left: 3px solid var(--border); padding: 5px 0 5px 9px; margin-bottom: 7px; }
+.pa-comp-name { font-weight: 600; }
+.pa-comp-meta { color: var(--text-2); font-size: 11px; margin-left: 5px; }
+.pa-comp-rev { color: var(--text-2); font-style: italic; font-size: 11.5px; margin-top: 2px; }
+.pa-anchors { display: flex; flex-direction: column; gap: 3px; }
+.pa-anchor { font-size: 11.5px; color: var(--text-2); }
+.pa-sources { margin-top: 12px; font-size: 11px; color: var(--text-2); word-break: break-word; }
+.pa-sources a { color: var(--ganit-blue); }
+
+/* Compact gap summary cards (left list) */
+.gap-line { font-size: 11.5px; color: var(--text-2); margin-top: 5px; line-height: 1.45; }
+.gap-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.gap-chip { font-size: 10.5px; font-weight: 600; color: var(--good); background: #dcfce7;
+  padding: 2px 8px; border-radius: 20px; }
+.gap-tap { font-size: 11px; font-weight: 600; color: var(--ganit-blue); margin-top: 8px; }
+
+/* Property / rent block in the right panel */
+.pa-prop { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.pa-prop-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+.pa-prop-row span { color: var(--text-2); }
+.pa-prop-note { font-size: 11px; color: var(--text-2); margin-top: 4px; font-style: italic; }
+.pa-comps { display: flex; flex-direction: column; gap: 4px; }
+.pa-dist { color: var(--text-2); font-size: 11px; }
+
+/* Loan Assessor */
+.loan-disclaimer { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px;
+  padding: 9px 11px; margin: 12px 0; font-size: 11.5px; line-height: 1.5; color: #9a3412; }
+.loan-disclaimer strong { color: #9a3412; }
+.loan-disclaimer.compact { margin: 12px 0 0; font-size: 10.5px; }
+#loanResult { margin-top: 4px; }
+
+.loan-disclaimer ul { margin: 5px 0 0; padding-left: 18px; }
+.loan-disclaimer li { margin-bottom: 2px; }

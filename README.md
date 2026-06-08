@@ -28,8 +28,42 @@ In ~30 seconds you get:
 
 ---
 
+## Two modes (top of the left panel)
+
+The product now has a **mode toggle**:
+
+### 1. Site Finder *(the original flow)*
+Type one Indian location → score that spot, draw the heatmap, rank the best nearby zones. One question, one deep answer (~30s).
+
+### 2. Expansion Planner *(new — "where am I, where am I not, where should I expand")*
+Upload your **entire existing network once** (CSV/Excel/JSON). Instead of judging one spot, it:
+
+1. **Scores every site you already run** — a 0-100 *health* score (STRONG / STABLE / WEAK), footfall index, revenue band, competitor count, and the share of nearby businesses that have shut down. Your network is plotted as **named, health-coloured pins** (green/amber/red) and listed weakest-first so the at-risk sites surface immediately.
+2. **Finds the gaps** — grids the region around your network into H3 hexes, scores each for expansion attractiveness (footfall + validated market + white space), and **subtracts everything inside your existing trade areas** (vertical-aware cannibalisation radius). The top spread-out winners become ranked **"expand here" targets**, each drawn as a **single highlighted hex** with a numbered blue pin.
+3. **Explains every recommendation** — tapping any site or gap opens a **deep, grounded AI analysis in the right-side panel**: verdict (OPEN/CONSIDER/AVOID), the real locality name, demand drivers, a competition read built from **live Google review text**, who lives/works there, risks, an **approximate property & rent cost** (₹/sqft, monthly rent, buy price), and named nearby competitors + footfall anchors. On-demand only, cached 7 days.
+4. **Estimates revenue with its reasoning** — a per-site grounded ₹ estimate that shows the **hypothesis and the assumptions** behind the figure (e.g. *daily transactions × interchange fee*), not just a number.
+
+**Speed by design:** the bulk network scan uses a **"Lite" scoring path** — Google Places (competitors + footfall anchors) + WorldPop population + place-quality only, run in **parallel batches of 8**. It deliberately skips the slow Site-Finder parts (the 99acres Apify scrape, the 12-call growth agent, per-hex elevation passes), so a 50-site network finishes in well under a minute (~2-4s/site) instead of ~25 minutes. The expensive grounded AI runs **only when you click a pin**, not for every site.
+
+### 3. Loan Assessor *(new — geographic collateral check for lending)*
+A daily-use tool for banks. Pick the **collateral type** (commercial / residential / agricultural / vacant land) and enter its location → a **geographic** read of the collateral, returned as short bullets with clickable Google Maps links:
+
+- **Locality & setting** (urban / semi-urban / rural) and a rough **value band**.
+- **💧 Water & risk** — nearest river / canal / lake / sea, groundwater situation, and flood/drought history (critical for agricultural land; grounded via Google Search).
+- **📍 Location** — connectivity & surroundings.
+- **🏬 Area business health** — nearby Google ratings, **live review text**, and the **% of nearby businesses permanently shut** (a "dying high street" signal).
+- **⚠️ Red flags** and a one-line geographic summary.
+
+**Explicit framing & disclaimer:** this is **decision-support only — one input, not a verdict**. It does the *geographic* part well and stays in its lane: it does **not** check title, encumbrance, ownership, legal disputes, or borrower credit. The disclaimer is shown up-front and repeated in the result. Endpoint: `/loan-analysis` (geocodes the address, reuses the rich-Places + grounded-AI stack, cached 7 days).
+
+---
+
 ## What's new (latest iteration)
 
+- **Loan Assessor mode (June 8, 2026)** — geographic collateral check for lenders across four collateral types, with grounded water/flood analysis (esp. for agricultural land), nearby business-health signals from live Google reviews/ratings/closures, a rough value band, Maps-linked evidence, and a clear "decision-support, not a verdict" disclaimer. New module `loanAnalysis.ts`; endpoint `/loan-analysis`.
+- **Bug fixes & polish (June 8, 2026)** — fixed a Firestore cache-write crash (`undefined` review-text fields rejected by Firestore) by enabling `ignoreUndefinedProperties`; this had been blocking the deep per-click analysis. Revenue framing is now hidden for ATM/branch verticals (only shown for retail/warehouse) and trimmed to a one-line range + key assumption. Expansion-gap cards now **name the actual nearby places** (not generic categories) with **clickable Google Maps links**; the right-side analysis links every competitor and anchor to Maps too. Loan disclaimer condensed to bullets.
+- **Expansion Planner mode (June 8, 2026)** — upload-your-network expansion planning with per-site health scoring, gap-finding, single-hex recommendation cells, a faked-but-honest progress checklist mirroring Site Finder, deep per-click AI analysis in the right panel (live review text, demographics, property/rent cost), revenue estimates with stated assumptions, and per-location client-side + Firestore caching (no re-analysis on revisit). New modules: `portfolio.ts`, `siteAnalysis.ts`; new endpoints `/portfolio`, `/site-analysis`, `/site-revenue`.
+- **Caching pass (June 8, 2026)** — a generic Firestore `withCache()` wrapper now backs the expensive grounded-AI calls: the 12-call **growth agent** is cached per locality (3-day TTL, so a re-search of the same area is instant for *any* user), and `/site-analysis` + `/site-revenue` are cached 7 days keyed by vertical+rounded-coords. Adds to the existing `zone_insights` and `realestate` caches.
 - **Exec-summary depth + data honesty (June 7, 2026, later)**:
   - **Market snapshot strip** — the executive summary now opens with a stat strip of real signals we already collect but never surfaced: **area population + density** (WorldPop), **average competitor rating**, **total review volume** (footfall proxy), and **% of permanently-closed businesses nearby** (a declining-high-street signal, colour-coded). Each card only renders when its data exists (`renderMarketSnapshot`).
   - **AI property-price fallback** — when the 99acres scrape returns no usable price (the old "₹0/sqft" problem), a **grounded Gemini query** estimates median ₹/sqft + typical BHK for the locality, shown with a clear orange **"· AI estimate"** label (`aiPropertyEstimate` in `agent.ts`, `withAiPropertyFallback` in `index.ts`). The Local Real Estate Indicators block is hidden entirely when no price is available from either source.
@@ -253,6 +287,10 @@ All endpoints under `https://api-bvb33x56gq-el.a.run.app` and also proxied at `/
 | POST | `/analyze-stream` | same body | **SSE stream**: `progress` + `notice` (broad-location nudge) events, final `result` event. **Used by the frontend.** |
 | POST | `/zone-insight` | `{vertical, area, city, lat, lng, final, demand, …}` (a clicked hex's facts) | On-demand, grounded AI verdict for ONE zone: `{verdict: OPEN\|CONSIDER\|AVOID, headline, facts[], reasoning[], bottomLine, sources[]}`. Cached in Firestore per zone. |
 | POST | `/import?name=foo.csv` | raw bytes (octet-stream) | Gemini-mapped canonical locations |
+| POST | `/portfolio` | `{vertical, locations: [{name, lat, lng, …}]}` | **Expansion Planner.** Scores every uploaded site + finds ranked expansion gaps + a regional heat surface. Fast "Lite" path (no Apify/agent). Returns `{sites[], gaps[], heat[], regional}`. |
+| POST | `/site-analysis` | `{vertical, lat, lng, kind, …}` | **Deep on-demand analysis** for one clicked site/gap: pulls live Google review text + multi-search grounded AI → `{verdict, locality, demandDrivers[], competitiveBullets[], demographicBullets[], risks[], propertyCost{}, bottomLine, evidence{}, sources[]}`. Cached 7 days. |
+| POST | `/site-revenue` | `{vertical, lat, lng, competitorCount, footfallIndex}` | Grounded ₹ revenue estimate + reasoning + assumptions for one site. Cached 7 days. |
+| POST | `/loan-analysis` | `{collateralType, location}` or `{collateralType, lat, lng, address?}` | **Loan Assessor.** Geographic collateral read: locality, water/flood, area business health, value band, red flags, Maps-linked evidence. Decision-support only. Cached 7 days. |
 | GET | `/agent-trail/:id` | — | Saved trail by ID |
 
 ### Verticals
@@ -267,6 +305,18 @@ All endpoints under `https://api-bvb33x56gq-el.a.run.app` and also proxied at `/
 | BFSI_BRANCH    | 0.35 | 0.25 | 0.20 | 0.20 |
 | FMCG_RETAIL    | 0.45 | 0.25 | 0.15 | 0.15 |
 | FMCG_WAREHOUSE | 0.25 | 0.10 | 0.40 | 0.25 |
+
+### Expansion Planner scoring (the "Lite" path, `portfolio.ts`)
+
+**Per-site health** = `footfallIndex − closedBusinessPenalty − thinFootfallPenalty`, where:
+- **footfallIndex** (0-100) = floor + `0.35 × WorldPop-density-demand` + `min(40, log10(reviewVolume) × 12)` (review volume across nearby commerce is a real footfall proxy) + `0.6 × amenityBoost` (schools/malls/offices/metro within the catchment).
+- **closed penalty** = `closedShare × 30` (a dying high street drags health down).
+- Verdict bands: STRONG ≥ 60, STABLE ≥ 42, else WEAK.
+
+**Gap (expansion) score** = `footfallIndex × 0.7 + min(20, competitors×6) + (competitors ≤ 3 ? 10 : 0)`.
+The logic: real footfall is necessary; **some** competition *validates* the market (so a little is good), but a crowded spot would split share (so the white-space bonus only applies when ≤ 3 competitors). A hex is a candidate only if it's **outside every existing trade area** (vertical-aware radius: ATM 0.8 km, store 1.2 km, branch 1.5 km, warehouse 3 km) and clears a footfall floor. Winners are de-duplicated to be ≥ 1.5 km apart so the top picks aren't all in one neighbourhood.
+
+**Trade-area radii** (cannibalisation guard): ATM 0.8 km · Retail 1.2 km · Branch 1.5 km · Warehouse 3 km.
 
 ---
 

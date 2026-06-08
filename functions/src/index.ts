@@ -19,7 +19,10 @@ import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
-import { runGrowthAgent, aiPropertyEstimate } from "./agent";
+import { runGrowthAgent, aiPropertyEstimate, aiSiteRevenue } from "./agent";
+import { planExpansion } from "./portfolio";
+import { analyzeSite, type SiteAnalysisInput } from "./siteAnalysis";
+import { analyzeLoanCollateral, type LoanAnalysisInput, type CollateralType } from "./loanAnalysis";
 import { getRealEstateSignals } from "./realestate";
 import { scoreHexes, topRecommendations, placeQuality, hexCenters } from "./scoring";
 import { waterCenters, centerKey } from "./water";
@@ -31,6 +34,9 @@ import { pinInfo } from "./census";
 import { getZoneInsight, type ZoneFacts } from "./zoneInsight";
 
 admin.initializeApp();
+// Tolerate undefined fields when writing cached payloads (review text, ratings,
+// etc. are often missing) — otherwise Firestore rejects the whole document.
+admin.firestore().settings({ ignoreUndefinedProperties: true });
 
 // Vertex AI uses Application Default Credentials in Cloud Functions — no key needed.
 const APIFY_TOKEN = defineSecret("APIFY_TOKEN");
@@ -122,7 +128,7 @@ router.post("/analyze-stream", async (req, res) => {
       getRealEstateSignals({ city: geo.city, area: geo.area })
         .then(r => { send("progress", { step: "realestate", label: `🏠 ${r.sampleSize} listings, ${r.listings?.length ?? 0} sampled`, done: true }); return r; }),
       bboxPopulation(geo.bbox).catch(() => null),
-      runGrowthAgent({ area: geo.area, city: geo.city, contextBrief })
+      cachedGrowthAgent(geo.area, geo.city, contextBrief)
         .then(r => { send("progress", { step: "agent", label: `🤖 Growth ${r.growthScore}/100 · ${r.trail.length} searches · 4 quadrants`, done: true }); return r; }),
     ]);
 
@@ -256,7 +262,7 @@ router.post("/analyze", async (req, res) => {
         : Promise.resolve([]),
       osmPois({ vertical, ...geo.bbox }),
       getRealEstateSignals({ city: geo.city, area: geo.area }),
-      runGrowthAgent({ area: geo.area, city: geo.city, contextBrief }),
+      cachedGrowthAgent(geo.area, geo.city, contextBrief),
     ]);
 
     const competitorsList = competitors.status === "fulfilled" ? competitors.value : [];
@@ -390,6 +396,99 @@ router.post("/import", async (req, res) => {
   }
 });
 
+// Expansion Planner ("My Network") — fast batched scoring of an uploaded
+// network of existing locations + a gap-finder for where to expand next.
+// Body: { vertical, locations: [{ name, lat, lng, branchId?, type? }] }
+router.post("/portfolio", async (req, res) => {
+  try {
+    const { vertical, locations } = req.body as {
+      vertical: Vertical;
+      locations: { name: string; lat: number; lng: number; branchId?: string; type?: string }[];
+    };
+    if (!vertical || !Array.isArray(locations) || locations.length === 0) {
+      res.status(400).json({ error: "vertical and a non-empty locations array are required" });
+      return;
+    }
+    const result = await planExpansion({ vertical, locations });
+    res.json(result);
+  } catch (e) {
+    console.error("portfolio failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
+// On-demand DEEP analysis for a single clicked site/gap (review text + multi-
+// search grounded AI). Shown in the right-side panel. ~5-8s per click.
+router.post("/site-analysis", async (req, res) => {
+  try {
+    const body = req.body as SiteAnalysisInput;
+    if (!body || !body.vertical || typeof body.lat !== "number" || typeof body.lng !== "number") {
+      res.status(400).json({ error: "vertical, lat and lng are required" });
+      return;
+    }
+    // Cache 7 days — locality fundamentals don't shift hour to hour.
+    const key = `${body.vertical}__${body.kind}__${coordKey(body.lat, body.lng)}`;
+    const analysis = await withCache("site_analysis", key, 7 * 864e5, () => analyzeSite(body));
+    res.json(analysis);
+  } catch (e) {
+    console.error("site-analysis failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
+// Loan Assessor — geographic collateral analysis (ONE input, not a verdict).
+// Body: { collateralType, location } OR { collateralType, lat, lng, address }
+router.post("/loan-analysis", async (req, res) => {
+  try {
+    const { collateralType, location, lat, lng, address } = req.body as {
+      collateralType: CollateralType; location?: string; lat?: number; lng?: number; address?: string;
+    };
+    if (!collateralType) { res.status(400).json({ error: "collateralType is required" }); return; }
+
+    let plat = lat, plng = lng, paddr = address;
+    if ((plat == null || plng == null) && location) {
+      const geo = await geocodeIndia(location);
+      if (!geo) { res.status(404).json({ error: "Could not locate that address" }); return; }
+      plat = geo.lat; plng = geo.lng; paddr = geo.formattedAddress;
+    }
+    if (plat == null || plng == null) { res.status(400).json({ error: "location or lat/lng required" }); return; }
+
+    const input: LoanAnalysisInput = { collateralType, lat: plat, lng: plng, address: paddr };
+    const key = `${collateralType}__${coordKey(plat, plng)}`;
+    const analysis = await withCache("loan_analysis", key, 7 * 864e5, () => analyzeLoanCollateral(input));
+    res.json({ ...analysis, lat: plat, lng: plng, address: paddr });
+  } catch (e) {
+    console.error("loan-analysis failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
+// On-demand grounded ₹ revenue estimate for a single clicked site/gap.
+// Body: { vertical, lat, lng, area?, competitorCount, footfallIndex }
+router.post("/site-revenue", async (req, res) => {
+  try {
+    const { vertical, lat, lng, area, competitorCount, footfallIndex } = req.body as {
+      vertical: Vertical; lat: number; lng: number; area?: string;
+      competitorCount?: number; footfallIndex?: number;
+    };
+    if (!vertical || typeof lat !== "number" || typeof lng !== "number") {
+      res.status(400).json({ error: "vertical, lat and lng are required" });
+      return;
+    }
+    const key = `${vertical}__${coordKey(lat, lng)}`;
+    const est = await withCache("site_revenue", key, 7 * 864e5, () => aiSiteRevenue({
+      vertical, lat, lng, area,
+      competitorCount: competitorCount ?? 0,
+      footfallIndex: footfallIndex ?? 50,
+    }));
+    if (!est) { res.json({ available: false }); return; }
+    res.json({ available: true, ...est });
+  } catch (e) {
+    console.error("site-revenue failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
 // On-demand per-zone AI insight. The frontend posts a clicked hex's facts and
 // gets back a decisive, fact-backed verdict. Cached in Firestore per zone.
 router.post("/zone-insight", async (req, res) => {
@@ -406,6 +505,36 @@ router.post("/zone-insight", async (req, res) => {
     res.status(500).json({ error: String((e as Error).message) });
   }
 });
+
+// Generic Firestore-backed cache for expensive AI/Places results. Keyed by a
+// caller-supplied string; rounded coordinates make nearby clicks share a cache
+// entry. Best-effort: any cache error just means we recompute. Same pattern as
+// zone_insights / realestate already used elsewhere.
+async function withCache<T>(collection: string, key: string, ttlMs: number, compute: () => Promise<T>): Promise<T> {
+  const safeKey = key.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 480);
+  const ref = admin.firestore().collection(collection).doc(safeKey);
+  try {
+    const snap = await ref.get();
+    if (snap.exists) {
+      const d = snap.data() as any;
+      if (d && d._cachedAt && Date.now() - d._cachedAt < ttlMs) return d.payload as T;
+    }
+  } catch { /* ignore — recompute */ }
+  const payload = await compute();
+  ref.set({ _cachedAt: Date.now(), payload }).catch(() => {});
+  return payload;
+}
+
+// Round coords so clicks within ~100 m reuse the same cached analysis.
+function coordKey(lat: number, lng: number) { return `${lat.toFixed(3)}_${lng.toFixed(3)}`; }
+
+// Cache the expensive 12-call growth agent by locality (area+city). Same area
+// searched again — by anyone — returns instantly instead of re-running Gemini.
+// 3-day TTL so growth signals stay reasonably fresh.
+function cachedGrowthAgent(area: string, city: string, contextBrief: string) {
+  return withCache("growth_agent", `${area}__${city}`.toLowerCase(), 3 * 864e5,
+    () => runGrowthAgent({ area, city, contextBrief }));
+}
 
 router.get("/agent-trail/:id", async (req, res) => {
   const snap = await admin.firestore().collection("agent_trails").doc(req.params.id).get();

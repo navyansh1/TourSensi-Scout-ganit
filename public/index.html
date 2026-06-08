@@ -74,6 +74,16 @@
 
   <main>
     <aside class="sidebar">
+      <!-- Mode toggle: Site Finder (evaluate one location) vs Expansion Planner
+           (upload your network → score sites + find gaps to expand into). -->
+      <div class="mode-toggle" id="modeToggle" role="group" aria-label="Mode">
+        <button class="mode-btn active" data-mode="finder" title="Evaluate one location">Site Finder</button>
+        <button class="mode-btn" data-mode="planner" title="Upload your network, find where to expand">Expansion Planner</button>
+        <button class="mode-btn" data-mode="loan" title="Geographic collateral check for lending">Loan Assessor</button>
+      </div>
+
+      <!-- ===== SITE FINDER (single-location flow — the original UI) ===== -->
+      <div id="finderMode">
       <div class="form-group">
         <label>Industry</label>
         <select id="vertical">
@@ -124,6 +134,71 @@
         <button id="trailToggle" class="ghost mini">Show 8 grounded searches ▾</button>
         <div id="trail" class="trail hidden"></div>
       </section>
+      </div><!-- /finderMode -->
+
+      <!-- ===== EXPANSION PLANNER (upload network → score + find gaps) ===== -->
+      <div id="plannerMode" class="hidden">
+        <div class="form-group">
+          <label>Industry</label>
+          <select id="plannerVertical">
+            <option value="BFSI_ATM">BFSI — ATM placement</option>
+            <option value="BFSI_BRANCH">BFSI — New branch</option>
+            <option value="FMCG_RETAIL">FMCG — Retail store</option>
+            <option value="FMCG_WAREHOUSE">FMCG — Warehouse / dark store</option>
+          </select>
+        </div>
+
+        <p class="planner-lede">Upload all your current locations once. We score every site, flag your weak ones, and pinpoint where to expand next — no need to type locations one by one.</p>
+
+        <div class="planner-actions">
+          <button id="plannerImportBtn" class="ghost block"><i class="uil uil-folder-upload"></i>Upload my locations</button>
+          <button id="plannerRunBtn" class="primary hidden"><i class="uil uil-bolt-alt"></i>Find where to expand</button>
+        </div>
+
+        <div id="plannerStatus" class="status"></div>
+        <div id="plannerProgress" class="progress-panel hidden"></div>
+
+        <section id="plannerResult" class="hidden">
+          <div id="plannerStats" class="result-stats"></div>
+
+          <h3>🎯 Where to expand</h3>
+          <ol id="gapList" class="rec-list"></ol>
+
+          <h3 style="margin-top:20px">🏠 Your network (weakest first)</h3>
+          <ol id="siteList" class="rec-list"></ol>
+        </section>
+      </div><!-- /plannerMode -->
+
+      <!-- ===== LOAN ASSESSOR (geographic collateral check) ===== -->
+      <div id="loanMode" class="hidden">
+        <div class="form-group">
+          <label>Collateral type</label>
+          <select id="loanType">
+            <option value="commercial">Commercial property (shop/office)</option>
+            <option value="residential">Residential property (home/flat)</option>
+            <option value="agricultural">Agricultural land / farmland</option>
+            <option value="land">Vacant land / plot</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Collateral location in India</label>
+          <input id="loanLocation" type="text" placeholder="e.g. survey no / address / locality" />
+        </div>
+        <button id="loanRunBtn" class="primary"><i class="uil uil-search-location"></i>Assess location</button>
+
+        <div class="loan-disclaimer">
+          ⚖️ <strong>Decision-support only — not a verdict.</strong>
+          <ul>
+            <li>Geographic read: locality, water &amp; flood, nearby business health, rough value.</li>
+            <li>One input to your decision.</li>
+            <li>No title, ownership, dispute or credit checks.</li>
+          </ul>
+        </div>
+
+        <div id="loanStatus" class="status"></div>
+        <div id="loanProgress" class="progress-panel hidden"></div>
+        <section id="loanResult" class="hidden"></section>
+      </div><!-- /loanMode -->
     </aside>
 
     <!-- Draggable divider between sidebar and map -->
