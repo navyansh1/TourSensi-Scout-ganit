@@ -110,15 +110,22 @@ function applyMapStyle() {
 
 function initMapControls() {
   // Map type buttons — with a sliding highlight pill (like the mode toggle).
-  const positionMapTypeSlider = (btn) => {
+  const positionMapTypeSlider = (btn, instant) => {
     const slider = document.getElementById("mapTypeSlider");
     if (!slider || !btn) return;
+    if (instant) { slider.style.transition = "none"; }
     slider.style.width = `${btn.offsetWidth}px`;
     slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+    if (instant) { void slider.offsetWidth; slider.style.transition = ""; }
   };
+  const mtGroup = document.getElementById("mapTypeGroup");
   const mtActive = document.querySelector("#mapTypeGroup .mc-btn.active");
   requestAnimationFrame(() => positionMapTypeSlider(mtActive));
-  window.addEventListener("resize", () => positionMapTypeSlider(document.querySelector("#mapTypeGroup .mc-btn.active")));
+  if (window.ResizeObserver && mtGroup) {
+    new ResizeObserver(() => positionMapTypeSlider(document.querySelector("#mapTypeGroup .mc-btn.active"), true)).observe(mtGroup);
+  } else {
+    window.addEventListener("resize", () => positionMapTypeSlider(document.querySelector("#mapTypeGroup .mc-btn.active"), true));
+  }
 
   document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(btn => {
     btn.onclick = () => {
@@ -2528,20 +2535,36 @@ function setupModeToggle() {
   if (!toggle) return;
   const btns = Array.from(toggle.querySelectorAll(".mode-btn"));
 
-  // Position the sliding highlight pill under a given button.
-  const positionSlider = (btn) => {
+  // Position the sliding highlight pill under a given button. `instant` skips the
+  // glide animation — used while the sidebar is being resized so the pill tracks
+  // the (reflowed) active button immediately instead of lagging behind.
+  const positionSlider = (btn, instant) => {
     const slider = document.getElementById("modeSlider");
     if (!slider || !btn) return;
-    slider.style.width = `${btn.offsetWidth}px`;
-    slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+    if (instant) {
+      slider.style.transition = "none";
+      slider.style.width = `${btn.offsetWidth}px`;
+      slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+      void slider.offsetWidth;        // flush, then restore the transition
+      slider.style.transition = "";
+    } else {
+      slider.style.width = `${btn.offsetWidth}px`;
+      slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+    }
   };
 
-  // Initial placement (and re-place on resize, since widths change).
+  // Initial placement.
   const active = btns.find(b => b.classList.contains("active")) || btns[0];
   requestAnimationFrame(() => positionSlider(active));
-  window.addEventListener("resize", () => {
-    positionSlider(toggle.querySelector(".mode-btn.active"));
-  });
+  // Re-measure whenever the toggle's box changes — this fires on sidebar
+  // drag-resize (not just window resize), fixing the stale-pill edge case.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      positionSlider(toggle.querySelector(".mode-btn.active"), true);
+    }).observe(toggle);
+  } else {
+    window.addEventListener("resize", () => positionSlider(toggle.querySelector(".mode-btn.active"), true));
+  }
 
   btns.forEach((btn, idx) => {
     btn.onclick = () => {
