@@ -3236,6 +3236,29 @@ async function runLoanAnalysis() {
   }
 }
 
+// Rainfall block for agricultural / land collateral — a mini year-by-year bar
+// chart + the repayment-capacity read.
+function renderRainfall(r) {
+  const bandColor = { abundant: "#16a34a", adequate: "#65a30d", marginal: "#d97706", arid: "#dc2626" }[r.band] || "#d97706";
+  const max = Math.max(1, ...r.years.map(y => y.mm));
+  const bars = (r.years || []).map(y => `
+    <div class="rf-bar-col" title="${y.year}: ${y.mm} mm · ${y.rainyDays} rainy days">
+      <div class="rf-bar" style="height:${Math.round((y.mm / max) * 60)}px; background:${bandColor}"></div>
+      <div class="rf-bar-lbl">'${String(y.year).slice(2)}</div>
+    </div>`).join("");
+  return `
+    <div class="pa-h">🌧️ Rainfall & repayment capacity</div>
+    <div class="rf-box">
+      <div class="rf-top">
+        <div class="rf-stat"><span class="rf-num" style="color:${bandColor}">${r.avgAnnualMm}</span><span class="rf-unit">mm/yr avg</span></div>
+        <div class="rf-stat"><span class="rf-num">${r.avgRainyDays}</span><span class="rf-unit">rainy days/yr</span></div>
+        <div class="rf-band" style="background:${bandColor}">${r.band}</div>
+      </div>
+      <div class="rf-chart">${bars}</div>
+      <div class="rf-note">${escapeHtml(r.note)}</div>
+    </div>`;
+}
+
 function renderLoanAnalysis(a) {
   const sec = document.getElementById("loanResult");
   sec.classList.remove("hidden");
@@ -3253,6 +3276,7 @@ function renderLoanAnalysis(a) {
       <div class="pa-headline">${escapeHtml(a.setting)}${a.valueBand ? ` · approx ${escapeHtml(a.valueBand)}` : ""}</div>
 
       ${a.waterAndRisk?.length ? `<div class="pa-h">💧 Water & risk</div><ul class="pa-list">${list(a.waterAndRisk)}</ul>` : ""}
+      ${a.rainfall ? renderRainfall(a.rainfall) : ""}
       ${a.locationFactors?.length ? `<div class="pa-h">📍 Location</div><ul class="pa-list">${list(a.locationFactors)}</ul>` : ""}
       ${a.commercialHealth?.length ? `<div class="pa-h">🏬 Area business health (${closedPct}% nearby shut)</div><ul class="pa-list">${list(a.commercialHealth)}</ul>` : ""}
       ${a.redFlags?.length ? `<div class="pa-h">⚠️ Red flags</div><ul class="pa-list pa-risks">${list(a.redFlags)}</ul>` : ""}

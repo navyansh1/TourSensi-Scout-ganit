@@ -171,7 +171,8 @@ button .uil,
 /* Sections */
 section { margin-top: 18px; }
 section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
-  color: var(--ganit-blue); margin: 0 0 8px; font-weight: 700; }
+  color: var(--ganit-blue); margin: 0 0 8px; font-weight: 700;
+  padding-left: 9px; border-left: 3px solid var(--ganit-orange); }
 
 /* Recommendations */
 .rec-list { padding: 0; list-style: none; margin: 0; }
@@ -516,7 +517,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 
 .subhead {
   margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border);
-  font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600;
+  font-size: 11px; color: var(--ganit-orange); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700;
 }
 
 /* Weighted score breakdown table */
@@ -583,6 +584,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.04);
 }
 .rs-head { font-size: 13px; color: var(--text-2); margin-bottom: 12px; }
+.rs-head i, .rs-head .uil { color: var(--ganit-orange); margin-right: 5px; }
 .rs-head strong { color: var(--ganit-blue); }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .stat {
@@ -908,6 +910,19 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   width: 320px; background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.14);
 }
+/* Rainfall block (Collateral Check, agricultural/land) */
+.rf-box { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 4px 0 8px; }
+.rf-top { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
+.rf-stat { display: flex; flex-direction: column; }
+.rf-num { font-size: 20px; font-weight: 800; line-height: 1; }
+.rf-unit { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 3px; }
+.rf-band { margin-left: auto; color: #fff; font-size: 11px; font-weight: 800; text-transform: uppercase; padding: 4px 10px; border-radius: 20px; }
+.rf-chart { display: flex; align-items: flex-end; gap: 8px; height: 76px; padding: 4px 2px; }
+.rf-bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; }
+.rf-bar { width: 100%; max-width: 28px; border-radius: 4px 4px 0 0; }
+.rf-bar-lbl { font-size: 10px; color: var(--muted); margin-top: 4px; }
+.rf-note { font-size: 12px; color: var(--text-2); line-height: 1.45; margin-top: 8px; }
+
 .settings-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .settings-head .settings-title { margin-bottom: 0; }
 .settings-title { font-weight: 800; color: var(--ganit-blue); font-size: 14px; margin-bottom: 12px; }
@@ -1155,8 +1170,9 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   padding: 3px 12px; border-radius: 20px; letter-spacing: .04em; }
 .pa-locality { font-size: 15px; font-weight: 700; color: var(--text); margin-top: 8px; }
 .pa-headline { font-size: 13px; color: var(--text); margin-top: 3px; font-weight: 500; }
-.pa-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
-  color: var(--text-2); margin: 13px 0 5px; }
+.pa-h { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--ganit-orange); margin: 13px 0 5px;
+  padding-left: 8px; border-left: 3px solid var(--ganit-orange); }
 .pa-list { margin: 0; padding-left: 18px; }
 .pa-list li { margin-bottom: 3px; }
 .pa-risks li { color: #b45309; }

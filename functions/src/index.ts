@@ -27,6 +27,7 @@ import { getRealEstateSignals } from "./realestate";
 import { scoreHexes, topRecommendations, placeQuality, hexCenters } from "./scoring";
 import { waterCenters, centerKey } from "./water";
 import { classifyLandUse } from "./landuse";
+import { jrcWaterHexes } from "./flood";
 import { parseFile, suggestColumnMapping, applyMapping } from "./importLocations";
 // Wikipedia context is currently disabled (see analyze-stream). Kept for re-enable.
 // import { wikiContext } from "./wikipedia";
@@ -156,13 +157,16 @@ router.post("/analyze-stream", async (req, res) => {
 
     send("progress", { step: "score", label: "📊 Scoring hexes…" });
     const centers = hexCenters(geo.bbox);
-    const [oceanSet, landUse] = await Promise.all([
+    const [oceanSet, landUse, jrcWater] = await Promise.all([
       oceanHexes(geo.bbox, centers),
       classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
+      // Satellite surface-water (JRC) — catches seasonal rivers/lakes that OSM
+      // misses in rural India (e.g. the Cheyyar). Fails open to empty.
+      jrcWaterHexes(centers).catch(() => new Set<string>()),
     ]);
-    // Exclude (remove) = open ocean (elevation) + all OSM water bodies. Penalise
-    // (floor to red, keep on map) = railway/airport/forest.
-    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes]);
+    // Exclude (remove) = open ocean (elevation) + OSM water + JRC satellite water.
+    // Penalise (floor to red, keep on map) = railway/airport/forest.
+    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes, ...jrcWater]);
     const penalizeHexes = landUse.noBuildHexes;
     const hexes = scoreHexes({
       vertical, bbox: geo.bbox,
@@ -284,11 +288,12 @@ router.post("/analyze", async (req, res) => {
     };
 
     const centers = hexCenters(geo.bbox);
-    const [oceanSet, landUse] = await Promise.all([
+    const [oceanSet, landUse, jrcWater] = await Promise.all([
       oceanHexes(geo.bbox, centers),
       classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
+      jrcWaterHexes(centers).catch(() => new Set<string>()),
     ]);
-    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes]);
+    const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes, ...jrcWater]);
     const penalizeHexes = landUse.noBuildHexes;
     const hexes = scoreHexes({
       vertical,

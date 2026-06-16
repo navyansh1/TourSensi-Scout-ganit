@@ -12,6 +12,8 @@
 
 import { VertexAI } from "@google-cloud/vertexai";
 import { richPlacesNearby, type RichPlace } from "./places";
+import { waterAt, floodNarrative } from "./flood";
+import { getRainfall } from "./rainfall";
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "toursensi-ganit-71c77";
 function vertex() { return new VertexAI({ project: PROJECT_ID, location: "us-central1" }); }
@@ -33,6 +35,13 @@ export interface LoanAnalysis {
   locationFactors: string[];       // short bullets — access, water, surroundings
   commercialHealth: string[];      // short bullets — ratings, reviews, closures
   waterAndRisk: string[];          // short bullets — rivers/ocean/flood/drought (esp. land/agri)
+  rainfall?: {                     // historical rainfall (agricultural/land only)
+    avgAnnualMm: number;
+    avgRainyDays: number;
+    band: "abundant" | "adequate" | "marginal" | "arid";
+    note: string;
+    years: { year: number; mm: number; rainyDays: number }[];
+  };
   redFlags: string[];              // short bullets
   summary: string;                 // one-line geographic summary
   evidence: {
@@ -70,6 +79,23 @@ export async function analyzeLoanCollateral(input: LoanAnalysisInput): Promise<L
   const closedShare = withStatus ? closed / withStatus : 0;
   const nearbyText = summarise(nearby) || "No notable businesses found nearby.";
 
+  // Satellite-confirmed surface-water / flood exposure at the exact parcel
+  // (JRC Global Surface Water, 30-yr occurrence). This is ground-truth — it
+  // doesn't depend on anyone having mapped the river in OSM.
+  const isLandLike = input.collateralType === "agricultural" || input.collateralType === "land";
+  const [water, rainfall] = await Promise.all([
+    waterAt(input.lat, input.lng, 14).catch(() => null),
+    // Rainfall only matters for land/agri repayment capacity — skip for built property.
+    isLandLike ? getRainfall(input.lat, input.lng).catch(() => null) : Promise.resolve(null),
+  ]);
+  const flood = water ? floodNarrative(water) : null;
+  const floodFact = flood
+    ? `SATELLITE FLOOD READING (JRC Global Surface Water, authoritative): ${flood.level} — ${flood.note}`
+    : "";
+  const rainFact = rainfall
+    ? `HISTORICAL RAINFALL (ERA5, last 3 yrs, authoritative): ~${rainfall.avgAnnualMm} mm/yr over ~${rainfall.avgRainyDays} rainy days — ${rainfall.band}. ${rainfall.note} For agricultural collateral, consistent rainfall supports crop yield and the borrower's repayment capacity.`
+    : "";
+
   const typeLabel: Record<CollateralType, string> = {
     commercial: "a commercial property (shop/office/restaurant)",
     residential: "a residential property (home/flat)",
@@ -91,6 +117,8 @@ export async function analyzeLoanCollateral(input: LoanAnalysisInput): Promise<L
 Live Google Places data on nearby businesses (ratings, review snippets, open/closed):
 ${nearbyText}
 About ${Math.round(closedShare * 100)}% of nearby businesses with a known status are permanently closed.
+${floodFact}
+${rainFact}
 
 Use Google Search to identify the exact locality and whether it is urban/semi-urban/rural, the surroundings & connectivity, a rough property value band, and ${waterEmphasis}
 
@@ -123,6 +151,11 @@ Be PUNCHY: every bullet ONE short line (≤ 12 words), concrete, number where po
   }
 
   const arr = (x: any, n: number) => Array.isArray(x) ? x.map((s: any) => String(s)).slice(0, n) : [];
+  // Lead the water/risk section with the satellite-confirmed flood fact (it's
+  // ground-truth, so it outranks the AI's web-sourced guesses), then the AI's.
+  const waterAndRisk = arr(parsed.waterAndRisk, 4);
+  if (rainfall) waterAndRisk.unshift(`🌧️ ${rainfall.note}`);
+  if (flood) waterAndRisk.unshift(`🛰️ ${flood.level} flood signal — ${flood.note}`);
   return {
     locality: String(parsed.locality || "this locality"),
     setting: String(parsed.setting || ""),
@@ -130,7 +163,11 @@ Be PUNCHY: every bullet ONE short line (≤ 12 words), concrete, number where po
     valueBand: parsed.valueBand ? String(parsed.valueBand).slice(0, 60) : undefined,
     locationFactors: arr(parsed.locationFactors, 5),
     commercialHealth: arr(parsed.commercialHealth, 4),
-    waterAndRisk: arr(parsed.waterAndRisk, 4),
+    waterAndRisk: waterAndRisk.slice(0, 6),
+    rainfall: rainfall ? {
+      avgAnnualMm: rainfall.avgAnnualMm, avgRainyDays: rainfall.avgRainyDays,
+      band: rainfall.band, note: rainfall.note, years: rainfall.years,
+    } : undefined,
     redFlags: arr(parsed.redFlags, 4),
     summary: String(parsed.summary || ""),
     evidence: {
