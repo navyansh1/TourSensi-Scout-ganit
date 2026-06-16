@@ -77,6 +77,20 @@ function initMap() {
     const p = ac.getPlace();
     if (p.geometry?.location) { map.panTo(p.geometry.location); map.setZoom(14); }
   });
+
+  // Same Google "powered by" autocomplete on the Loan Assessor's collateral
+  // address input, so it gets the same place-search dropdown as Site Finder.
+  const loanInput = document.getElementById("loanLocation");
+  if (loanInput) {
+    const lac = new google.maps.places.Autocomplete(loanInput, {
+      componentRestrictions: { country: "in" },
+      fields: ["formatted_address", "geometry", "name"],
+    });
+    lac.addListener("place_changed", () => {
+      const p = lac.getPlace();
+      if (p.geometry?.location) { map.panTo(p.geometry.location); map.setZoom(15); }
+    });
+  }
 }
 
 // Custom top-bar controls that drive the map directly (mimic Google's own
@@ -3120,6 +3134,56 @@ function hideLoadingOverlay() {
   document.getElementById("loadingOverlay").classList.add("hidden");
 }
 
+// Loan Assessor progress checklist — same left-bar pattern as Site Finder,
+// with loan-collateral wording. Timer-driven (the backend call is one shot).
+const LOAN_PROGRESS_ITEMS = [
+  "Locating the collateral parcel",
+  "Reading the surrounding locality",
+  "Checking water bodies & flood exposure",
+  "Scanning nearby business health & reviews",
+  "Gauging connectivity & access",
+  "Estimating a rough value band",
+  "Compiling the geographic collateral read",
+];
+let _loanTickTimer = null, _loanTickIdx = 0;
+
+function startLoanProgress() {
+  const panel = document.getElementById("loanProgress");
+  if (!panel) return;
+  panel.classList.remove("hidden");
+  _loanTickIdx = 0;
+  panel.innerHTML = `
+    <div class="progress-title"><i class="uil uil-hourglass"></i>Assessing collateral</div>
+    <ul class="progress-list">
+      ${LOAN_PROGRESS_ITEMS.map((label, i) => `
+        <li id="lpi-${i}" class="${i === 0 ? "running" : "pending"}">
+          <span class="ps-icon">${i === 0 ? '<span class="spinner"></span>' : "○"}</span>
+          <span class="ps-label">${label}</span>
+        </li>`).join("")}
+    </ul>`;
+  clearTimeout(_loanTickTimer);
+  const STEP_MS = 2200;
+  const advance = () => {
+    if (_loanTickIdx >= LOAN_PROGRESS_ITEMS.length - 1) return; // hold last for result
+    const done = document.getElementById(`lpi-${_loanTickIdx}`);
+    if (done) { done.className = "done"; done.querySelector(".ps-icon").textContent = "✓"; }
+    _loanTickIdx++;
+    const run = document.getElementById(`lpi-${_loanTickIdx}`);
+    if (run) { run.className = "running"; run.querySelector(".ps-icon").innerHTML = '<span class="spinner"></span>'; }
+    _loanTickTimer = setTimeout(advance, STEP_MS);
+  };
+  _loanTickTimer = setTimeout(advance, STEP_MS);
+}
+
+function finishLoanProgress() {
+  clearTimeout(_loanTickTimer);
+  for (let i = 0; i < LOAN_PROGRESS_ITEMS.length; i++) {
+    const li = document.getElementById(`lpi-${i}`);
+    if (li) { li.className = "done"; li.querySelector(".ps-icon").textContent = "✓"; }
+  }
+  setTimeout(() => document.getElementById("loanProgress")?.classList.add("hidden"), 450);
+}
+
 async function runLoanAnalysis() {
   const collateralType = document.getElementById("loanType").value;
   const location = document.getElementById("loanLocation").value.trim();
@@ -3129,14 +3193,7 @@ async function runLoanAnalysis() {
   status.textContent = ""; status.className = "status";
   btn.disabled = true;
   document.getElementById("loanResult").classList.add("hidden");
-  showLoadingOverlay("Assessing the location…", [
-    "Locating the collateral…",
-    "Reading the surrounding area…",
-    "Checking water & flood context…",
-    "Scanning nearby business health & reviews…",
-    "Estimating a rough value band…",
-    "Compiling the geographic read…",
-  ]);
+  startLoanProgress();
 
   try {
     const body = loanPinned
@@ -3148,13 +3205,13 @@ async function runLoanAnalysis() {
     });
     if (!resp.ok) throw new Error(await resp.text());
     const a = await resp.json();
-    hideLoadingOverlay();
+    finishLoanProgress();
     if (a && a.error) throw new Error(a.error);
     renderLoanAnalysis(a);
     status.textContent = "✓ Geographic read ready.";
     status.className = "status ok";
   } catch (e) {
-    hideLoadingOverlay();
+    finishLoanProgress();
     console.error("loan analysis failed:", e);
     status.textContent = `Could not analyse that location: ${e.message}`;
     status.className = "status error";
