@@ -2467,9 +2467,26 @@ function setupModeToggle() {
       toggle.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       const mode = btn.dataset.mode;
-      document.getElementById("finderMode").classList.toggle("hidden", mode !== "finder");
-      document.getElementById("plannerMode").classList.toggle("hidden", mode !== "planner");
-      document.getElementById("loanMode").classList.toggle("hidden", mode !== "loan");
+      const panels = {
+        finder: document.getElementById("finderMode"),
+        planner: document.getElementById("plannerMode"),
+        loan: document.getElementById("loanMode"),
+      };
+      for (const [key, el] of Object.entries(panels)) {
+        if (!el) continue;
+        const show = key === mode;
+        el.classList.toggle("hidden", !show);
+        if (show) {
+          // Re-trigger the entry animation each time the panel is shown.
+          el.classList.remove("mode-enter");
+          void el.offsetWidth; // force reflow so the animation restarts
+          el.classList.add("mode-enter");
+        }
+      }
+      // Animate the active-button highlight sliding in.
+      btn.classList.remove("mode-btn-pop");
+      void btn.offsetWidth;
+      btn.classList.add("mode-btn-pop");
       // Keep the map controls relevant; each mode draws its own markers.
       if (mode === "finder") clearPlannerMap();
       else clearFinderMapForPlanner();

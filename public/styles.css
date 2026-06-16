@@ -980,6 +980,25 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .mode-btn:hover { color: var(--ganit-blue); }
 .mode-btn.active { background: var(--ganit-blue); color: #fff; }
 
+/* Smooth mode switching (Site Finder / Expansion Planner / Loan Assessor).
+   The panel toggles display via .hidden; this entry animation plays whenever a
+   panel becomes visible, giving a soft slide-up + fade. */
+.mode-enter { animation: modeEnter .32s cubic-bezier(.22, .61, .36, 1); }
+@keyframes modeEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Tiny pop on the clicked toggle button. */
+.mode-btn-pop { animation: modeBtnPop .3s ease; }
+@keyframes modeBtnPop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode-enter, .mode-btn-pop { animation: none; }
+}
+
 .planner-lede { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin: 4px 0 14px; }
 #plannerStats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 6px 0 14px; }
 .pstat { background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 6px; text-align: center; }
