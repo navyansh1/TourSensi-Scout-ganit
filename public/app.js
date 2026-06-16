@@ -1514,6 +1514,7 @@ function clearWeightOverride(vertical) {
 function initWeightSliders() {
   const wrap = document.getElementById("weightSliders");
   const resetBtn = document.getElementById("weightResetBtn");
+  const saveBtn = document.getElementById("weightSaveBtn");
   if (!wrap) return;
   renderWeightSliders();
   if (resetBtn) {
@@ -1521,6 +1522,21 @@ function initWeightSliders() {
       clearWeightOverride(currentSettingsVertical());
       renderWeightSliders();
       applyLiveWeights();
+    };
+  }
+  if (saveBtn) {
+    saveBtn.onclick = () => {
+      // Weights already persist live to localStorage on each change; this is an
+      // explicit confirm + re-apply, with clear "saved" feedback.
+      saveWeightOverride(currentSettingsVertical(), readSliderWeights());
+      applyLiveWeights();
+      saveBtn.classList.add("saved");
+      saveBtn.innerHTML = `<i class="uil uil-check-circle"></i>Saved`;
+      clearTimeout(saveBtn._t);
+      saveBtn._t = setTimeout(() => {
+        saveBtn.classList.remove("saved");
+        saveBtn.innerHTML = `<i class="uil uil-check"></i>Save`;
+      }, 1800);
     };
   }
   // Keep the editor in sync when the user changes the Industry dropdown.
