@@ -51,7 +51,7 @@
       <button id="compareBtn" class="ghost hidden"><i class="uil uil-balance-scale"></i>Compare (<span id="compareCount">0</span>)</button>
       <button id="importBtn" class="ghost"><i class="uil uil-folder-open"></i>Import my locations</button>
       <button id="infoBtn" class="ghost icon-btn hidden" title="About this tool & data sources" aria-label="About"><i class="uil uil-info-circle"></i></button>
-      <button id="settingsBtn" class="ghost icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+      <button id="settingsBtn" class="ghost icon-btn" title="Settings" aria-label="Settings"><i class="uil uil-setting"></i></button>
     </div>
 
     <!-- Settings popover -->
@@ -73,6 +73,7 @@
       <!-- Mode toggle: Site Finder (evaluate one location) vs Expansion Planner
            (upload your network → score sites + find gaps to expand into). -->
       <div class="mode-toggle" id="modeToggle" role="group" aria-label="Mode">
+        <span class="mode-slider" id="modeSlider" aria-hidden="true"></span>
         <button class="mode-btn active" data-mode="finder" title="Evaluate one location">Site Finder</button>
         <button class="mode-btn" data-mode="planner" title="Upload your network, find where to expand">Expansion Planner</button>
         <button class="mode-btn" data-mode="loan" title="Geographic collateral check for lending">Loan Assessor</button>

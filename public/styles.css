@@ -983,6 +983,7 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 
 /* ===== Expansion Planner ("My Network" mode) ===== */
 .mode-toggle {
+  position: relative;
   display: flex; gap: 6px; margin-bottom: 16px;
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: 10px; padding: 4px;
@@ -992,26 +993,38 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   border: none; background: transparent; color: var(--text-2);
   border-radius: 7px; cursor: pointer; transition: all .15s;
 }
+.mode-btn { position: relative; z-index: 1; }
 .mode-btn:hover { color: var(--ganit-blue); }
-.mode-btn.active { background: var(--ganit-blue); color: #fff; }
+/* The active button's highlight is drawn by the sliding pill below, so the
+   button itself just turns its text white — no background of its own. */
+.mode-btn.active { background: transparent; color: #fff; }
+
+/* Sliding highlight pill — glides under the active tab via translateX. */
+.mode-slider {
+  position: absolute; top: 4px; bottom: 4px; left: 0;
+  transform: translateX(0);
+  background: var(--ganit-blue); border-radius: 7px; z-index: 0;
+  box-shadow: 0 2px 8px rgba(26, 0, 217, 0.35);
+  transition: transform .36s cubic-bezier(.34, 1.3, .5, 1), width .36s cubic-bezier(.34, 1.3, .5, 1);
+  pointer-events: none;
+}
 
 /* Smooth mode switching (Site Finder / Expansion Planner / Loan Assessor).
-   The panel toggles display via .hidden; this entry animation plays whenever a
-   panel becomes visible, sliding the new panel in from the right. */
-.mode-enter { animation: modeEnter .34s cubic-bezier(.22, .61, .36, 1); }
-@keyframes modeEnter {
-  from { opacity: 0; transform: translateX(40px); }
+   The panel toggles display via .hidden; these entry animations slide the new
+   panel in from the direction of travel. */
+.mode-enter-right { animation: modeEnterR .34s cubic-bezier(.22, .61, .36, 1); }
+.mode-enter-left  { animation: modeEnterL .34s cubic-bezier(.22, .61, .36, 1); }
+@keyframes modeEnterR {
+  from { opacity: 0; transform: translateX(38px); }
   to   { opacity: 1; transform: translateX(0); }
 }
-/* Tiny pop on the clicked toggle button. */
-.mode-btn-pop { animation: modeBtnPop .3s ease; }
-@keyframes modeBtnPop {
-  0%   { transform: scale(1); }
-  45%  { transform: scale(1.06); }
-  100% { transform: scale(1); }
+@keyframes modeEnterL {
+  from { opacity: 0; transform: translateX(-38px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mode-enter, .mode-btn-pop { animation: none; }
+  .mode-slider { transition: none; }
+  .mode-enter-right, .mode-enter-left { animation: none; }
 }
 
 .planner-lede { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin: 4px 0 14px; }

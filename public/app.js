@@ -2484,13 +2484,38 @@ let plannerMarkers = [];      // map markers drawn in planner mode
 let plannerResultData = null; // last /portfolio response
 let plannerAnalysisCache = {}; // keyed by "lat,lng" → cached deep AI analysis (no re-fetch on revisit)
 
+let _modeIndex = 0; // track active tab index so we know slide direction
+
 function setupModeToggle() {
   const toggle = document.getElementById("modeToggle");
   if (!toggle) return;
-  toggle.querySelectorAll(".mode-btn").forEach(btn => {
+  const btns = Array.from(toggle.querySelectorAll(".mode-btn"));
+
+  // Position the sliding highlight pill under a given button.
+  const positionSlider = (btn) => {
+    const slider = document.getElementById("modeSlider");
+    if (!slider || !btn) return;
+    slider.style.width = `${btn.offsetWidth}px`;
+    slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+  };
+
+  // Initial placement (and re-place on resize, since widths change).
+  const active = btns.find(b => b.classList.contains("active")) || btns[0];
+  requestAnimationFrame(() => positionSlider(active));
+  window.addEventListener("resize", () => {
+    positionSlider(toggle.querySelector(".mode-btn.active"));
+  });
+
+  btns.forEach((btn, idx) => {
     btn.onclick = () => {
-      toggle.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+      if (btn.classList.contains("active")) return;
+      const dir = idx > _modeIndex ? 1 : -1; // moving right vs left
+      _modeIndex = idx;
+
+      btns.forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
+      positionSlider(btn);            // slide the pill (CSS transitions transform)
+
       const mode = btn.dataset.mode;
       const panels = {
         finder: document.getElementById("finderMode"),
@@ -2502,16 +2527,13 @@ function setupModeToggle() {
         const show = key === mode;
         el.classList.toggle("hidden", !show);
         if (show) {
-          // Re-trigger the entry animation each time the panel is shown.
-          el.classList.remove("mode-enter");
+          // Slide content in from the direction of travel: moving to a tab on
+          // the right → new panel enters from the right, and vice-versa.
+          el.classList.remove("mode-enter-left", "mode-enter-right");
           void el.offsetWidth; // force reflow so the animation restarts
-          el.classList.add("mode-enter");
+          el.classList.add(dir > 0 ? "mode-enter-right" : "mode-enter-left");
         }
       }
-      // Animate the active-button highlight sliding in.
-      btn.classList.remove("mode-btn-pop");
-      void btn.offsetWidth;
-      btn.classList.add("mode-btn-pop");
       // Keep the map controls relevant; each mode draws its own markers.
       if (mode === "finder") clearPlannerMap();
       else clearFinderMapForPlanner();
