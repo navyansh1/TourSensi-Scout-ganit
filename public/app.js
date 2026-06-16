@@ -2350,14 +2350,35 @@ async function onImportFile(e) {
   const file = e.target.files[0];
   if (!file) return;
   const status = document.getElementById("importStatus");
-  status.textContent = "Reading + AI-mapping columns…";
-  status.className = "status loading";
-  const buf = await file.arrayBuffer();
-  const resp = await fetch(`${RUN}/import?name=${encodeURIComponent(file.name)}`, {
-    method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf,
-  });
-  if (!resp.ok) { status.textContent = `Error: ${await resp.text()}`; status.className = "status error"; return; }
-  const data = await resp.json();
+  status.className = "status";
+  status.innerHTML = `
+    <div class="import-loading">
+      <span class="spinner big"></span>
+      <div class="import-loading-text">
+        <div class="il-title">Reading <strong>${escapeHtml(file.name)}</strong>…</div>
+        <div class="il-sub" id="importLoadingSub">Parsing rows & AI-mapping your columns</div>
+      </div>
+    </div>`;
+  // Gently cycle the sub-line so the wait feels alive.
+  const ilSteps = ["Parsing rows & AI-mapping your columns", "Detecting name / address / coordinate columns", "Geocoding any missing coordinates", "Almost there — preparing your locations"];
+  let ilI = 0;
+  const ilTimer = setInterval(() => {
+    ilI = (ilI + 1) % ilSteps.length;
+    const el = document.getElementById("importLoadingSub");
+    if (el) el.textContent = ilSteps[ilI];
+  }, 1600);
+
+  let data;
+  try {
+    const buf = await file.arrayBuffer();
+    const resp = await fetch(`${RUN}/import?name=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: buf,
+    });
+    if (!resp.ok) { clearInterval(ilTimer); status.textContent = `Error: ${await resp.text()}`; status.className = "status error"; return; }
+    data = await resp.json();
+  } finally {
+    clearInterval(ilTimer);
+  }
 
   // If the upload was triggered from Expansion Planner, route the mapped
   // locations there instead of plotting them as finder-mode imports.
@@ -2536,8 +2557,19 @@ function onPlannerLocations(locations) {
     return;
   }
   if (countEl) countEl.textContent = plannerLocations.length;
-  runBtn.classList.remove("hidden");
-  status.textContent = `✓ Loaded ${plannerLocations.length} of your existing locations. Click "Find where to expand".`;
+  // The morphed upload button (below) becomes the run trigger, so the separate
+  // "Find where to expand" button stays hidden to avoid duplicate controls.
+  if (runBtn) runBtn.classList.add("hidden");
+  // Morph the "Upload my locations" button into "Start analysing" now that
+  // locations are loaded, so it doubles as the run trigger.
+  const importBtn = document.getElementById("plannerImportBtn");
+  if (importBtn) {
+    importBtn.classList.remove("ghost");
+    importBtn.classList.add("primary", "planner-analyse-btn");
+    importBtn.innerHTML = `<i class="uil uil-bolt-alt"></i>Start analysing ${plannerLocations.length} locations`;
+    importBtn.onclick = runPlanner;
+  }
+  status.textContent = `✓ Loaded ${plannerLocations.length} of your existing locations. Click "Start analysing".`;
   status.className = "status ok";
   document.getElementById("importModal").classList.add("hidden");
 

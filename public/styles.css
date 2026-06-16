@@ -782,7 +782,18 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   border: 2px solid var(--ganit-blue); border-top-color: transparent;
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
+.spinner.big { width: 26px; height: 26px; border-width: 3px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Import modal loading state */
+.import-loading {
+  display: flex; align-items: center; gap: 14px;
+  background: #f5f7ff; border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px; margin-top: 4px;
+}
+.import-loading-text .il-title { font-size: 14px; color: var(--text, #1a1a2e); }
+.import-loading-text .il-sub { font-size: 12px; color: var(--muted); margin-top: 3px; animation: ilFade .5s ease; }
+@keyframes ilFade { from { opacity: .3; } to { opacity: 1; } }
 
 .hidden { display: none !important; }
 .invisible { visibility: hidden !important; }
