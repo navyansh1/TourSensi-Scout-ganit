@@ -271,6 +271,7 @@ function bindUI() {
     };
   }
   updateLegendSwatches();
+  initWeightSliders();
 
   // Dismiss all active tooltips when clicking anywhere else
   document.addEventListener("click", () => {
@@ -438,9 +439,13 @@ function finishProgress() {
 }
 
 // ---------- render ----------
-function renderResult(data) {
-  map.panTo({ lat: data.geo.lat, lng: data.geo.lng });
-  map.fitBounds(data.geo.bbox);
+// preserveView=true skips the pan/fit (used for live re-scoring so dragging a
+// weight slider doesn't yank the map around).
+function renderResult(data, preserveView = false) {
+  if (!preserveView) {
+    map.panTo({ lat: data.geo.lat, lng: data.geo.lng });
+    map.fitBounds(data.geo.bbox);
+  }
 
   // Clear previous selected poly
   if (selectedPolyHighlight) {
@@ -622,6 +627,7 @@ function renderExecMini(data) {
   const ex = data.agent.executive || { rating: 3, recommendation: "CAUTION", bottomLine: "" };
   const stars = "★".repeat(ex.rating) + "☆".repeat(5 - ex.rating);
   return `
+    ${renderExpandElsewhereBanner(data, ex)}
     <div class="em-row">
       <div class="em-area">${escapeHtml(data.geo.area || data.geo.city)}</div>
       <div class="em-rec ${ex.recommendation}">${recommendationLabel(ex.recommendation)}</div>
@@ -642,6 +648,43 @@ function recommendationLabel(rec) {
   if (rec === "GO") return "Highly Recommended";
   if (rec === "AVOID") return "Not Recommended";
   return "Proceed with Caution";
+}
+
+// "This place is already well-served — expand elsewhere" one-liner.
+// Tied to the honesty/saturation signal rather than a raw cutoff: it fires when
+// the best site here is only mediocre (top score in a 50–66 band) AND the area
+// is either already saturated with competitors or the company already operates
+// here. That's the "fine, but no real headroom — go scout a neighbouring
+// market" situation, distinct from a genuinely underserved area that scores mid.
+function renderExpandElsewhereBanner(data, ex) {
+  const best = data.recommendations?.[0]?.final ?? 0;
+  const competitors = data.counts?.competitors ?? 0;
+  const own = data.counts?.ownBrand ?? 0;
+
+  // 1. Genuinely bad area — a blunt "don't expand here". Fires on a weak best
+  //    score or an explicit AVOID verdict from the agent's honesty pass.
+  if (best < 50 || ex.recommendation === "AVOID") {
+    return `
+      <div class="expand-elsewhere bad">
+        <strong>🚫 Don't expand here.</strong>
+        The best site in this area only reaches ${best}/100 — demand, access and growth are all too thin to justify a location. Scout a stronger market instead.
+      </div>`;
+  }
+
+  // 2. Already well-served — "fine, but no headroom, look elsewhere". Tied to the
+  //    saturation signal, not a raw cutoff, so it won't fire on a genuinely
+  //    underserved area that happens to score mid.
+  const saturated = competitors >= 12 || own >= 4;
+  const mediocre = best >= 50 && best <= 66;
+  if (mediocre && saturated) {
+    return `
+      <div class="expand-elsewhere">
+        <strong>This area is already well-served.</strong>
+        Top achievable site is only ${best}/100${own ? ` and you already run ${own} here` : ""}.
+        There's limited headroom — consider scanning an adjacent market for a stronger opening.
+      </div>`;
+  }
+  return "";
 }
 
 // Split a short prose blurb into clean sentence bullets.
@@ -1022,7 +1065,8 @@ function showHexPanel(h, data) {
   document.getElementById("hexBody").innerHTML = `
     ${h.signals.noBuild ? `<div class="nobuild-banner">🚫 No-build zone — this area sits on a railway, airport, water body or forest. Not a viable site.</div>` : ""}
     ${h.tag ? `<div class="rec-tag tag-${h.tag}" style="margin-bottom:8px; background: ${scoreColor(h.final)}">${TAG_LABELS[h.tag]}</div>` : ""}
-    <div style="margin-bottom: 14px"><span class="final-pill" style="background:${scoreColor(h.final)}">Score ${h.final}/100</span></div>
+    <div style="margin-bottom: 4px"><span class="final-pill" style="background:${scoreColor(h.final)}">Score ${h.final}/100</span></div>
+    <div class="site-vs-market">This is the score for <strong>this specific plot</strong> — it can differ from the overall area verdict (the market can be hot while one plot is held back by, say, weak access).</div>
 
     <div id="zoneInsight" class="zone-insight loading">
       <div class="zi-spinner"><span class="spinner"></span> Analyzing this zone with AI…</div>
@@ -1030,11 +1074,8 @@ function showHexPanel(h, data) {
 
     ${assessmentHTML}
 
-    <div class="score-row"><span class="label">Demand</span><span class="v">${h.demand}</span></div>
-    <div class="score-row"><span class="label">Free space (low saturation)</span><span class="v">${h.saturation}</span></div>
-    <div class="score-row"><span class="label">Accessibility</span><span class="v">${h.access}</span></div>
-    <div class="score-row"><span class="label">Future growth (AI)</span><span class="v">${h.growth}</span></div>
-    
+    ${renderScoreBreakdown(h, data)}
+
     <div class="subhead">Zone Statistics</div>
     <div class="score-row"><span class="label">🔴 Competitors</span><span class="v">${h.signals.competitorCount}</span></div>
     <div class="score-row"><span class="label">🟢 Your sites</span><span class="v">${h.signals.ownBrandCount}</span></div>
@@ -1218,6 +1259,223 @@ function getPaletteStops(/* theme */) {
   if (theme === "ganit")   return [[0,[230,120,90]],[35,[244,160,100]],[50,[210,200,170]],[65,[120,140,220]],[80,[60,70,200]],[100,[26,0,217]]];
   if (theme === "colorblind") return [[0,[70,110,200]],[35,[120,160,220]],[50,[200,200,200]],[65,[240,210,120]],[80,[240,180,40]],[100,[200,140,0]]];
   */
+}
+
+// ---- Weighted score breakdown -------------------------------------------
+// Per-vertical default weights, mirrored from functions/src/companies.ts so the
+// frontend can recompute scores live when the user edits weights in Settings.
+const DEFAULT_WEIGHTS = {
+  BFSI_ATM:       { demand: 0.40, saturation: 0.30, access: 0.20, growth: 0.10 },
+  BFSI_BRANCH:    { demand: 0.35, saturation: 0.25, access: 0.20, growth: 0.20 },
+  FMCG_RETAIL:    { demand: 0.45, saturation: 0.25, access: 0.15, growth: 0.15 },
+  FMCG_WAREHOUSE: { demand: 0.25, saturation: 0.10, access: 0.40, growth: 0.25 },
+};
+
+const FACTOR_META = {
+  demand:     { label: "Demand",        hint: "Population, affluence & footfall nearby" },
+  saturation: { label: "Whitespace",    hint: "Room to enter — low competitor density" },
+  access:     { label: "Accessibility", hint: "Roads, transit & arterial visibility" },
+  growth:     { label: "Future growth", hint: "AI read on upcoming infra & development" },
+};
+
+// Resolve the weights in effect for a vertical: a user override saved in
+// Settings takes precedence, otherwise the server-sent / default weights.
+function effectiveWeights(vertical, serverWeights) {
+  const override = loadWeightOverride(vertical);
+  if (override) return override;
+  return serverWeights || DEFAULT_WEIGHTS[vertical] || DEFAULT_WEIGHTS.BFSI_ATM;
+}
+
+function loadWeightOverride(vertical) {
+  try {
+    const raw = localStorage.getItem("weightOverrides");
+    if (!raw) return null;
+    const all = JSON.parse(raw);
+    return all && all[vertical] ? all[vertical] : null;
+  } catch { return null; }
+}
+
+// Recompute a hex's final from its sub-scores under a given weight set.
+// Mirrors the backend blend (without the cosmetic noise, so points sum exactly).
+function recomputeFinal(h, w) {
+  let f = h.demand * w.demand + h.saturation * w.saturation +
+          h.access * w.access + h.growth * w.growth;
+  if (h.demand < 30 && h.access < 35) f *= 0.7;          // viability gate
+  if (h.signals && h.signals.noBuild) f = Math.min(f, 8); // no-build floor
+  return Math.max(0, Math.min(100, Math.round(f)));
+}
+
+function factorRead(key, score) {
+  if (score >= 70) return key === "saturation" ? "Open — little competition" : "Strong";
+  if (score >= 50) return "Moderate";
+  if (score >= 35) return "Weak";
+  return key === "access" ? "⚠️ Poor — the main drag" : "⚠️ Very weak";
+}
+
+// The auditable table: Factor · Score · Weight · Points, summing to the final.
+function renderScoreBreakdown(h, data) {
+  const w = effectiveWeights(data?.vertical, data?.weights);
+  const keys = ["demand", "saturation", "access", "growth"];
+  const rows = keys.map(k => {
+    const score = h[k];
+    const weight = w[k];
+    const points = score * weight;
+    const m = FACTOR_META[k];
+    return `
+      <tr title="${m.hint}">
+        <td class="sb-factor">${m.label}</td>
+        <td class="sb-score" style="color:${scoreColor(score)}">${score}</td>
+        <td class="sb-weight">${Math.round(weight * 100)}%</td>
+        <td class="sb-points">${points.toFixed(1)}</td>
+        <td class="sb-read">${factorRead(k, score)}</td>
+      </tr>`;
+  }).join("");
+  const total = keys.reduce((s, k) => s + h[k] * w[k], 0);
+  return `
+    <div class="subhead">How this score is built</div>
+    <table class="score-breakdown">
+      <thead>
+        <tr><th>Factor</th><th>Score</th><th>Weight</th><th>Points</th><th></th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td class="sb-factor">Weighted total</td>
+          <td></td><td></td>
+          <td class="sb-points" style="color:${scoreColor(h.final)}">${total.toFixed(1)}</td>
+          <td class="sb-read">≈ ${h.final}/100</td>
+        </tr>
+      </tfoot>
+    </table>
+    <div class="sb-note">Each factor is scored 0–100 from real data, then multiplied by its
+      weight. The weighted points add up to the final score. Adjust the weights in
+      <strong>⚙️ Settings</strong> to match your priorities.</div>`;
+}
+
+// ---- Settings: editable per-vertical weight sliders ---------------------
+function currentSettingsVertical() {
+  // Tie the weight editor to whichever vertical the user is currently analysing.
+  return (lastResult && lastResult.vertical) ||
+    document.getElementById("vertical")?.value || "BFSI_ATM";
+}
+
+function saveWeightOverride(vertical, weights) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem("weightOverrides") || "{}"); } catch {}
+  all[vertical] = weights;
+  localStorage.setItem("weightOverrides", JSON.stringify(all));
+}
+
+function clearWeightOverride(vertical) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem("weightOverrides") || "{}"); } catch {}
+  delete all[vertical];
+  localStorage.setItem("weightOverrides", JSON.stringify(all));
+}
+
+function initWeightSliders() {
+  const wrap = document.getElementById("weightSliders");
+  const resetBtn = document.getElementById("weightResetBtn");
+  if (!wrap) return;
+  renderWeightSliders();
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      clearWeightOverride(currentSettingsVertical());
+      renderWeightSliders();
+      applyLiveWeights();
+    };
+  }
+  // Keep the editor in sync when the user changes the Industry dropdown.
+  document.getElementById("vertical")?.addEventListener("change", renderWeightSliders);
+}
+
+function renderWeightSliders() {
+  const wrap = document.getElementById("weightSliders");
+  if (!wrap) return;
+  const vertical = currentSettingsVertical();
+  const tag = document.getElementById("weightVerticalLabel");
+  if (tag) tag.textContent = "(" + vertical.replace("_", " ") + ")";
+  const w = effectiveWeights(vertical, lastResult?.weights);
+  const keys = ["demand", "saturation", "access", "growth"];
+  wrap.innerHTML = keys.map(k => `
+    <div class="weight-row">
+      <label>${FACTOR_META[k].label}</label>
+      <input type="range" min="0" max="100" step="5" value="${Math.round(w[k]*100)}" data-key="${k}" />
+      <span class="weight-val" data-val="${k}">${Math.round(w[k]*100)}%</span>
+    </div>`).join("");
+  wrap.querySelectorAll("input[type=range]").forEach(inp => {
+    inp.oninput = onWeightSliderInput;
+  });
+  updateWeightTotal();
+}
+
+function readSliderWeights() {
+  const wrap = document.getElementById("weightSliders");
+  const raw = {};
+  wrap.querySelectorAll("input[type=range]").forEach(inp => { raw[inp.dataset.key] = Number(inp.value); });
+  const sum = Object.values(raw).reduce((a, b) => a + b, 0) || 1;
+  // Normalise to sum to 1.0 so the final score stays on a 0–100 scale.
+  const norm = {};
+  for (const k in raw) norm[k] = raw[k] / sum;
+  return norm;
+}
+
+function onWeightSliderInput() {
+  const wrap = document.getElementById("weightSliders");
+  wrap.querySelectorAll("input[type=range]").forEach(inp => {
+    const span = wrap.querySelector(`[data-val="${inp.dataset.key}"]`);
+    if (span) span.textContent = inp.value + "%";
+  });
+  updateWeightTotal();
+  const weights = readSliderWeights();
+  saveWeightOverride(currentSettingsVertical(), weights);
+  applyLiveWeights();
+}
+
+function updateWeightTotal() {
+  const wrap = document.getElementById("weightSliders");
+  const el = document.getElementById("weightTotal");
+  if (!wrap || !el) return;
+  let sum = 0;
+  wrap.querySelectorAll("input[type=range]").forEach(inp => sum += Number(inp.value));
+  el.textContent = sum + "% → normalised to 100%";
+}
+
+// Re-score the loaded result in place under the current weights — no server call.
+function applyLiveWeights() {
+  if (!lastResult || !lastResult.hexes || !map) return;
+  const w = effectiveWeights(currentSettingsVertical(), lastResult.weights);
+  for (const h of lastResult.hexes) h.final = recomputeFinal(h, w);
+  // Re-pick & re-tag the top recommendations from the rescored hexes.
+  lastResult.recommendations = topRecommendationsClient(lastResult.hexes, 5);
+  // Full clean re-render (clears existing hexes/pins first), but keep the
+  // current viewport so the map doesn't jump while the user drags a slider.
+  clearMap();
+  renderResult(lastResult, true);
+}
+
+// Frontend mirror of functions/src/scoring.ts → topRecommendations.
+function topRecommendationsClient(scored, n = 5) {
+  const cand = [...scored]
+    .filter(h => (h.signals.competitorCount + h.signals.ownBrandCount) <= 1)
+    .sort((a, b) => b.final - a.final)
+    .slice(0, 20);
+  const picks = [];
+  const take = (arr, tag, reason) => {
+    const c = arr.find(x => !picks.some(p => p.hex === x.hex));
+    if (c) picks.push({ ...c, tag, tagReason: reason });
+  };
+  if (cand[0]) picks.push({ ...cand[0], tag: "BEST_OVERALL", tagReason: "Top composite score across all dimensions" });
+  take([...cand].sort((a, b) => b.growth - a.growth), "GROWTH_PLAY", "Highest future-growth signal in the area");
+  take([...cand].sort((a, b) => (b.demand + b.access) - (a.demand + a.access)), "SAFE_BET", "Strong existing demand and accessibility");
+  take([...cand].sort((a, b) => b.saturation - a.saturation), "UNDERSERVED", "Zero or near-zero competition nearby");
+  take([...cand].sort((a, b) => (b.signals.pricePerSqft ?? 0) - (a.signals.pricePerSqft ?? 0)), "PREMIUM_PICK", "Wealthiest segment based on real-estate prices");
+  while (picks.length < n) {
+    const next = cand.find(c => !picks.some(p => p.hex === c.hex));
+    if (!next) break;
+    picks.push(next);
+  }
+  return picks.slice(0, n);
 }
 
 function scoreColor(s) {

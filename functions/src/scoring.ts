@@ -271,6 +271,19 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
     // Viability gate: a site can't be genuinely good where there's almost no
     // demand and no access, regardless of low competition. Pull such hexes down.
     if (demand < 30 && access < 35) final = Math.round(final * 0.7);
+
+    // Empty-greenfield gate (aggressive): a hex with NO real demand signal, NO
+    // population reading and NO access fabric is an undeveloped field. Low
+    // competition there is meaningless ("free space" in the middle of nowhere),
+    // and a neutral ~50 growth prior must not float it into "Decent". Cap it hard
+    // so rural greenfields read Marginal/Avoid instead of a misleading 50. This
+    // keeps the heatmap honest and aligned with the AI's "Not Recommended" text.
+    const barren = !hasAnyDemandSignal && !hasPop && ctx.accessBoost <= 0 && osmAround === 0;
+    if (barren) final = Math.min(final, 30);
+    // Soft-barren: some signal but still very thin demand AND weak access —
+    // pull the neutral growth prop down so it can't masquerade as a real site.
+    else if (demand < 38 && access < 40 && saturationLoad === 0) final = Math.round(final * 0.78);
+
     final = Math.max(0, Math.min(100, final));
 
     // No-build land (railway / airport / river-lake / forest): floor the score so

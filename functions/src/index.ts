@@ -14,7 +14,7 @@ import express from "express";
 import cors from "cors";
 
 import { geocodeIndia } from "./geocode";
-import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, type Vertical } from "./companies";
+import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, VERTICAL_WEIGHTS, type Vertical } from "./companies";
 import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
@@ -213,6 +213,7 @@ router.post("/analyze-stream", async (req, res) => {
         trail: agentResult.trail,
       },
       hexes, recommendations: recs,
+      weights: VERTICAL_WEIGHTS[vertical],
       placeQuality: placeQuality(competitorsList),
       competitorsList, ownList,
     });
@@ -332,6 +333,7 @@ router.post("/analyze", async (req, res) => {
       agent: { trailId, growthScore: agentResult.growthScore, reasoning: agentResult.reasoning, trail: agentResult.trail },
       hexes,
       recommendations: recs,
+      weights: VERTICAL_WEIGHTS[vertical],
       competitorsList,
       ownList,
     });

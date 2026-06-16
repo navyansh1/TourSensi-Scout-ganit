@@ -19,15 +19,34 @@ export interface Poi {
 
 const KEY = () => process.env.GOOGLE_MAPS_SERVER_KEY || "";
 
+// Great-circle distance in metres. Used to HARD-filter Places results to the
+// requested radius — `locationBias` is only a soft hint, so in sparse/rural
+// areas Google happily returns the 20 nearest matches from the whole region
+// (e.g. ATMs in the next town), which then inflate competitor / own-site counts
+// even though they sit far outside the searched neighbourhood.
+function metresBetween(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371000;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
 export async function searchPlaces(opts: {
   query: string;
   centerLat: number;
   centerLng: number;
   radiusM?: number;
   maxResults?: number;
+  // When true (default), drop results that fall outside radiusM of the centre.
+  // Set false only for searches where you deliberately want the soft bias.
+  hardFilter?: boolean;
 }): Promise<Poi[]> {
   const radius = opts.radiusM ?? 3000;
   const max = opts.maxResults ?? 20;
+  const hardFilter = opts.hardFilter !== false;
 
   if (!KEY()) throw new Error("GOOGLE_MAPS_SERVER_KEY not set");
 
@@ -65,7 +84,14 @@ export async function searchPlaces(opts: {
     priceLevel: p.priceLevel,
     businessStatus: p.businessStatus,
     primaryType: p.primaryType,
-  })).filter((p: Poi) => p.lat && p.lng);
+  }))
+    .filter((p: Poi) => p.lat && p.lng)
+    // Hard radius filter: locationBias is soft, so this is what actually keeps
+    // out-of-area places (next-town ATMs, region-wide brand hits) out of the
+    // counts and off the map. A small 15% slack absorbs viewport rounding.
+    .filter((p: Poi) =>
+      !hardFilter || metresBetween(opts.centerLat, opts.centerLng, p.lat, p.lng) <= radius * 1.15,
+    );
 }
 
 // Richer place data for the on-demand DEEP analysis: actual review snippets,
