@@ -45,11 +45,12 @@ Upload your **entire existing network once** (CSV/Excel/JSON). Instead of judgin
 
 **Speed by design:** the bulk network scan uses a **"Lite" scoring path** — Google Places (competitors + footfall anchors) + WorldPop population + place-quality only, run in **parallel batches of 8**. It deliberately skips the slow Site-Finder parts (the 99acres Apify scrape, the 12-call growth agent, per-hex elevation passes), so a 50-site network finishes in well under a minute (~2-4s/site) instead of ~25 minutes. The expensive grounded AI runs **only when you click a pin**, not for every site.
 
-### 3. Loan Assessor *(new — geographic collateral check for lending)*
+### 3. Collateral Check *(geographic risk read on loan collateral)*
 A daily-use tool for banks. Pick the **collateral type** (commercial / residential / agricultural / vacant land) and enter its location → a **geographic** read of the collateral, returned as short bullets with clickable Google Maps links:
 
 - **Locality & setting** (urban / semi-urban / rural) and a rough **value band**.
-- **💧 Water & risk** — nearest river / canal / lake / sea, groundwater situation, and flood/drought history (critical for agricultural land; grounded via Google Search).
+- **💧 Water & flood risk** — leads with a **🛰️ satellite-confirmed flood signal** from **JRC Global Surface Water** (30-yr occurrence, authoritative ground-truth — catches seasonal rivers OSM misses), then nearest river / canal / lake / sea and grounded flood/drought context.
+- **🌧️ Rainfall & repayment capacity** *(agricultural / land only)* — 3-year historical rainfall (annual mm + rainy days, banded abundant→arid) from **Open-Meteo / ERA5**, shown as a mini year bar chart. Consistent rainfall = productive land = stronger borrower repayment capacity.
 - **📍 Location** — connectivity & surroundings.
 - **🏬 Area business health** — nearby Google ratings, **live review text**, and the **% of nearby businesses permanently shut** (a "dying high street" signal).
 - **⚠️ Red flags** and a one-line geographic summary.
@@ -60,6 +61,15 @@ A daily-use tool for banks. Pick the **collateral type** (commercial / residenti
 
 ## What's new (latest iteration)
 
+- **Satellite water/flood truth, rainfall, Collateral Check rename & UX polish (June 17, 2026)**:
+  - **JRC satellite surface-water** (`flood.ts`) — water/flood is now read from **JRC Global Surface Water** (30-yr occurrence) via its public PNG tiles (`storage.googleapis.com/global-surface-water/...`, no auth, decoded with `pngjs`). This is satellite ground-truth, so it catches **seasonal rivers OSM misses** (the Cheyyar was tagged only as a centerline, so the old Overpass check never saw it). Wired into **both** the heatmap water-exclusion **and** the Collateral Check's flood signal. Fails open.
+  - **Rainfall & repayment capacity** (`rainfall.ts`) — for **agricultural / vacant-land** collateral, pulls 3-year historical rainfall (annual mm + rainy days) from **Open-Meteo / ERA5** (free, no key), bands it abundant→arid, and surfaces it as a repayment-capacity read with a mini year-by-year bar chart.
+  - **Renamed "Loan Assessor" → "Collateral Check"** — accurate and humble (it reads the *geographic* risk of the collateral; it is not a valuation or a credit check). The "decision-support, not a verdict" framing stays loud.
+  - **Collateral Check UX** — Google "powered by" **place autocomplete** on the collateral address, and the centered overlay replaced with the **Site-Finder-style left-bar progress checklist** (loan-collateral wording).
+  - **Fluid mode toggle** — the Site Finder / Expansion Planner / Collateral Check highlight is now a **sliding pill** (transform+width transition) and content slides in from the direction of travel; the **Map / Satellite / Standard** toggle got the same pill. Re-measures via `ResizeObserver` so it doesn't go stale on sidebar resize.
+  - **Editable-weights Save** — a green **Save** button with "Saved" feedback in the Settings weights panel (weights also persist live to `localStorage`).
+  - **Reconciled score breakdown** — the per-hex table now shows a **Weighted subtotal + explicit Sparse-area / No-build penalty row → Final score**, so a penalised rural hex (e.g. 44.5 → 19) reconciles instead of looking like a maths error.
+  - **Mode-switch guard** — confirms before switching modes when it would discard current results; **"RESULTS" divider** removes the empty gap below Analyze; **more orange accents** across section headers, subheads and the stat-head icon; settings gear is now a Unicons icon.
 - **Scoring transparency, editable weights & count-accuracy fixes (June 16, 2026)**:
   - **Auditable score breakdown** — the hex detail panel now shows *how* a score is built: a **Factor · Score · Weight · Points** table (Demand / Whitespace / Access / Future growth) whose weighted points sum to the final, plus a plain-English read per factor (`renderScoreBreakdown` in `app.js`). The backend now returns the resolved `weights` object in the `/analyze` response so the table is exact.
   - **Editable weights in Settings** — the ⚙️ Settings panel is restored with **four per-vertical sliders**, auto-normalised to 100% and persisted to `localStorage` (with a "reset to defaults" button). Adjusting a slider **re-scores everything client-side instantly** — final scores, recommendation ranking, rec tags and heatmap colours all update with no server round-trip (`initWeightSliders`, `applyLiveWeights`, `topRecommendationsClient`). The map viewport is preserved while dragging.
@@ -172,6 +182,8 @@ A daily-use tool for banks. Pick the **collateral type** (commercial / residenti
 |---|---|---|---|
 | **Geocoding** | Google Geocoding API + Reverse Geocoding | 10K free/mo + $5 per 1K | Reverse geocode fills PIN when neighborhood lookup didn't include it |
 | **Water / ocean** | Google Maps Elevation API | 40K free/mo | One batched call over all hex centres; elevation ≤ 0 m ⇒ sea ⇒ hex excluded (`water.ts`). Fails open. |
+| **Surface water / flood (satellite)** | **JRC Global Surface Water** occurrence tiles (`storage.googleapis.com/global-surface-water/...`) | **Free, no auth** | 30-yr satellite water occurrence, read per-point from public PNG tiles (decoded with `pngjs`). Ground-truth — catches **seasonal rivers OSM misses**. Excludes water hexes from the heatmap AND feeds the Collateral Check flood signal (`flood.ts`). Fails open. |
+| **Rainfall (agri collateral)** | **Open-Meteo / ERA5** archive API | **Free, no key** | 3-yr historical daily precipitation → annual mm + rainy-day bands (abundant→arid) as a repayment-capacity read for agricultural/land collateral (`rainfall.ts`). |
 | **No-build land** | OpenStreetMap Overpass (`out geom;`) | Free | Railway/airport/water/forest polygons; local point-in-polygon test floors those hexes (`landuse.ts`). Fails open. |
 | **Competitor POIs** | Google Places API (New) Text Search | 5K free/mo + $32 per 1K | 20-result `searchText` per analyze call. Now also captures `rating`, `userRatingCount`, `priceLevel`, `businessStatus` → fed into scoring as a footfall / "dying high-street" quality signal (`placeQuality` in `scoring.ts`). |
 | **Your brand POIs** | Same — keyword filter per `companies.ts` catalog | same | E.g. `"HDFC Bank", "HDFC ATM"` |
@@ -211,6 +223,8 @@ TourSensi Scout/
         ├── osm.ts                 ← Overpass POI fetch (background demand layer)
         ├── context.ts             ← vertical-specific nearby amenities (Google Places) + per-hex proximity + AI brief
         ├── worldpop.ts            ← WorldPop free population API (async submit→poll) → demand signal
+        ├── flood.ts               ← JRC Global Surface Water satellite tiles → per-point/hex water & flood (no auth)
+        ├── rainfall.ts            ← Open-Meteo/ERA5 historical rainfall → agri collateral repayment-capacity read
         ├── zoneInsight.ts         ← on-demand per-zone AI verdict (OPEN/CONSIDER/AVOID), cached in Firestore
         ├── companies.ts           ← BFSI + FMCG company catalog (HDFC, DMart, Zepto…)
         ├── realestate.ts          ← Apify 99acres caller + Firestore cache + signal compute
