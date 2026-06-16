@@ -331,18 +331,69 @@ The logic: real footfall is necessary; **some** competition *validates* the mark
 
 ---
 
-## Cost & free-tier notes
+## Cost & per-search pricing
 
-| Item | Free tier | Hackathon cost estimate |
+### Unit prices (verified June 2026)
+
+Google removed the universal **$200/month** Maps credit in 2026 and replaced it with **per-SKU free monthly tiers**. Prices below are pay-as-you-go *after* the free tier, in the 0–100 K band.
+
+| Service / SKU | Unit price | Free tier (per month) |
 |---|---|---|
-| Firebase Hosting + Firestore + Functions | Spark plan free → Blaze pay-as-you-go | <$1 |
-| Google Maps JS API | 10K loads/month free | $0 |
-| Places API (New) text search | 5K free/month (Pro SKU) | $0 — note: each analyze now also runs ~5-6 *nearby-context* Places queries (vertical-dependent) on top of the competitor/brand searches. Still within free tier for demo volume; cache per-area in Firestore if traffic grows. |
-| Geocoding | 10K free/month | $0 |
-| Vertex AI Gemini 2.5 Flash + grounding | Generous Blaze free tier; ~$0.035 per grounded prompt thereafter | <$2 |
-| Apify 99acres actor | Free tier covers demo runs | $0 |
-| Wikipedia / OSM / India Post | Free, unlimited (within etiquette) | $0 |
-| **Total** | | **< $5 for the whole hackathon** |
+| Places API (New) — **Text Search** (Pro) | **$32.00 / 1,000 calls** | 5,000 Text Search calls |
+| Geocoding API | **$5.00 / 1,000 calls** | 10,000 calls |
+| Maps JavaScript — Dynamic Map load | **$7.00 / 1,000 loads** | 10,000 loads |
+| Maps Elevation API | **$5.00 / 1,000 calls** | 10,000 calls |
+| Vertex AI **Gemini 2.5 Flash** — tokens | **$0.15 / 1M input · $0.60 / 1M output** | small Blaze allowance |
+| Vertex AI **Google Search grounding** | **$35.00 / 1,000 grounded prompts** | 1,500 grounded prompts/day |
+| WorldPop · OpenStreetMap (Overpass) · India Post · Wikipedia | **Free** | unlimited (within etiquette) |
+| Apify **99acres** actor | per Apify plan (free tier covers demo runs) | — |
+
+> **Field-mask note:** the Places SKU is set by which fields you request. Competitor/own-brand searches request `rating`, `userRatingCount`, `types`, `businessStatus`, etc. → billed as **Text Search (Pro)**. Context-POI searches use a minimal `id, displayName, location` mask but are still **Text Search** calls at the same $32/1,000 rate.
+
+A Gemini call costs roughly **$0.001–0.002 in tokens** (short prompts, ~1–3 K tokens each). The dominant AI cost is **grounding at $0.035 per grounded prompt**, so we price each AI call below as *grounded ≈ $0.036* or *ungrounded ≈ $0.0015*.
+
+### Site Finder — cost per search (one location analysed)
+
+`/analyze` runs this fan-out once. Places counts assume the **ATM** vertical (9 context factors — the most; branch/retail/warehouse use 7, so they're a touch cheaper).
+
+| Step | Calls | Billed SKU | Cost (after free tier) |
+|---|---|---|---|
+| Geocode the location | 1 | Geocoding | $0.005 |
+| Competitor search | 1 | Places Text Search | $0.032 |
+| Own-brand search (≈2 keywords) | 2 | Places Text Search | $0.064 |
+| Nearby-context POIs (ATM=9 / others=7) | 9 | Places Text Search | $0.288 |
+| Ocean check (Elevation, batched) | 1 | Elevation | $0.005 |
+| Land-use (Overpass OSM) | 1 | free | $0 |
+| Population (WorldPop) | 1 | free | $0 |
+| Real estate (Apify 99acres) | 1 | Apify plan | ~$0 (demo tier) |
+| **Growth agent** — 8 grounded + 4 quadrant + 1 synthesis | 13 (12 grounded) | Gemini + grounding | **≈ $0.43** (12 × $0.036 + tokens) |
+| Map load in the browser | 1 | Dynamic Map | $0.007 |
+| **Site Finder total (cache cold)** | | | **≈ $0.85 per search** |
+
+Plus, on demand: each **per-hex AI verdict** the user clicks = 1 grounded Gemini ≈ **$0.036** (cached per zone, so repeat clicks are free).
+
+**Caching makes the real cost far lower.** The growth agent is cached per locality for 3 days, real-estate per area, and zone insights per hex — so a re-search of the same area costs only the Places + Geocoding fan-out (**≈ $0.39**, mostly Places), and the expensive ~$0.43 AI portion drops to **$0**.
+
+### Loan Assessor — cost per search (one collateral parcel)
+
+`/loan-analysis` is deliberately lean — no quadrant agent, no heatmap fan-out:
+
+| Step | Calls | Billed SKU | Cost (after free tier) |
+|---|---|---|---|
+| Geocode the address | 1 | Geocoding | $0.005 |
+| Rich nearby places (reviews/ratings/closures) | 1 | Places Text Search | $0.032 |
+| Grounded collateral analysis (water/flood + business health) | 1 grounded | Gemini + grounding | ≈ $0.037 |
+| **Loan Assessor total (cache cold)** | | | **≈ $0.074 per search** |
+
+Cached 7 days by vertical + rounded coordinates, so a repeat check of the same parcel is **≈ $0**.
+
+### Bottom line
+
+- **Site Finder ≈ $0.85** per fresh analysis (≈ **$0.39** on a cache hit) — the growth agent's grounded searches dominate.
+- **Loan Assessor ≈ $0.07** per fresh analysis (≈ **$0** on a cache hit).
+- The first **5,000 Places**, **10,000 geocodes/maps/elevation**, and **1,500 grounded prompts/day** each month are free, so low-volume demo usage stays **well under $5/month**.
+
+Sources: [Google Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing) · [Vertex AI / Gemini pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing) · [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
 
 ---
 

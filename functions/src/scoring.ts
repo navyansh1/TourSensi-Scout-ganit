@@ -220,7 +220,7 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
           ? 0.42 * (pop as number) + 0.20 * osmDemand
           : 0.40 * osmDemand) +
         0.18 * wealth +
-        0.25 * (50 + ctx.demandBoost) +   // amenity boost centered on 50, +/- up to 40
+        0.25 * (35 + ctx.demandBoost) +   // amenity boost centered on 35 (was 50), +/- up to 40
         distBump * 0.4 +
         (noise * 4)
       )),
@@ -272,17 +272,27 @@ export function scoreHexes(inputs: ScoreInputs): HexScore[] {
     // demand and no access, regardless of low competition. Pull such hexes down.
     if (demand < 30 && access < 35) final = Math.round(final * 0.7);
 
-    // Empty-greenfield gate (aggressive): a hex with NO real demand signal, NO
-    // population reading and NO access fabric is an undeveloped field. Low
-    // competition there is meaningless ("free space" in the middle of nowhere),
-    // and a neutral ~50 growth prior must not float it into "Decent". Cap it hard
-    // so rural greenfields read Marginal/Avoid instead of a misleading 50. This
-    // keeps the heatmap honest and aligned with the AI's "Not Recommended" text.
+    // Sparse-population penalty (the strongest honest "rural greenfield" signal).
+    // WorldPop density drives `pop`: ~1k/km² → ~0, ~8k → ~50. A genuinely sparse
+    // rural area (pop demand < ~25) should NOT read "Decent ~50" just because it's
+    // empty (high free-space) with a neutral growth prior. Scale the final down
+    // proportionally to how thin the population is, so villages read Marginal/Avoid
+    // and agree with the AI's "Not Recommended" text. Only applied when we actually
+    // have a population reading (hasPop) — otherwise we don't know.
+    if (hasPop && (pop as number) < 25) {
+      // pop 0 → ×0.45, pop 25 → ×1.0 (linear ramp)
+      const factor = 0.45 + 0.55 * ((pop as number) / 25);
+      final = Math.round(final * factor);
+    }
+
+    // Empty-greenfield gate: a hex with NO real demand signal, NO population
+    // reading and NO access fabric is an undeveloped field. Cap it hard so it
+    // reads Marginal/Avoid rather than a misleading ~50.
     const barren = !hasAnyDemandSignal && !hasPop && ctx.accessBoost <= 0 && osmAround === 0;
-    if (barren) final = Math.min(final, 30);
+    if (barren) final = Math.min(final, 28);
     // Soft-barren: some signal but still very thin demand AND weak access —
     // pull the neutral growth prop down so it can't masquerade as a real site.
-    else if (demand < 38 && access < 40 && saturationLoad === 0) final = Math.round(final * 0.78);
+    else if (demand < 38 && access < 42 && saturationLoad === 0) final = Math.round(final * 0.78);
 
     final = Math.max(0, Math.min(100, final));
 

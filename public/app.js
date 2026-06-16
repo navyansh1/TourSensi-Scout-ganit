@@ -472,6 +472,15 @@ function renderResult(data, preserveView = false) {
 
   // Headline stat card
   document.getElementById("resultStats").innerHTML = renderResultStats(data);
+  // Wire clickable Competitors / Your sites stat cards → popup list of places.
+  document.querySelectorAll("#resultStats .stat-clickable").forEach(card => {
+    card.onclick = () => {
+      const kind = card.dataset.poilist;
+      const list = kind === "competitors" ? (data.competitorsList || []) : (data.ownList || []);
+      const title = kind === "competitors" ? "🔴 Competitors nearby" : "🟢 Your sites nearby";
+      showPoiListPopup(title, list, kind === "competitors" ? "#dc2626" : "#16a34a");
+    };
+  });
 
   // Exec mini card in sidebar
   document.getElementById("execMini").innerHTML = renderExecMini(data);
@@ -574,19 +583,73 @@ function renderResultStats(data) {
   const growth = data.agent?.growthScore ?? 0;
   const best = data.recommendations?.[0]?.final ?? Math.max(0, ...(data.hexes || []).map(h => h.final));
   const area = data.geo?.area || data.geo?.city || "this area";
-  const stat = (value, label, color) => `
-    <div class="stat">
-      <div class="stat-value" style="${color ? `color:${color}` : ""}">${value}</div>
+  // Clickable stat: shows a "ⓘ click" hint and opens a popup list of places.
+  const stat = (value, label, color, clickKey) => `
+    <div class="stat${clickKey ? " stat-clickable" : ""}" ${clickKey ? `data-poilist="${clickKey}"` : ""}>
+      <div class="stat-value" style="${color ? `color:${color}` : ""}">${value}${clickKey ? ` <span class="stat-info" title="Click to see the list">ⓘ</span>` : ""}</div>
       <div class="stat-label">${label}</div>
     </div>`;
   return `
     <div class="rs-head"><i class="uil uil-chart-bar"></i>Analysis ready for <strong>${escapeHtml(area)}</strong></div>
     <div class="stat-grid">
-      ${stat(c.competitors ?? 0, "Competitors", "#dc2626")}
-      ${stat(c.ownBrand ?? 0, "Your sites", "#16a34a")}
+      ${stat(c.competitors ?? 0, "Competitors", "#dc2626", (data.competitorsList?.length ? "competitors" : ""))}
+      ${stat(c.ownBrand ?? 0, "Your sites", "#16a34a", (data.ownList?.length ? "own" : ""))}
       ${stat(`${best}`, "Top site score", scoreColor(best))}
       ${stat(`${growth}`, "Growth outlook", "var(--ganit-blue)")}
     </div>`;
+}
+
+// Popup listing competitor / own-site places. Each row links to Google Maps and
+// flies the map to that pin on click.
+function showPoiListPopup(title, list, accent) {
+  document.getElementById("poiListPopup")?.remove();
+  const rows = list.map((p, i) => {
+    const rating = (typeof p.rating === "number")
+      ? `<span class="poi-rating">★ ${p.rating.toFixed(1)}${p.userRatings ? ` (${p.userRatings})` : ""}</span>` : "";
+    return `
+      <li class="poi-row" data-lat="${p.lat}" data-lng="${p.lng}" data-name="${escapeHtml(p.name || "")}">
+        <span class="poi-idx" style="background:${accent}">${i + 1}</span>
+        <span class="poi-main">
+          <span class="poi-name">${escapeHtml(p.name || "Unnamed place")}</span>
+          ${rating}
+        </span>
+        <a class="poi-map" href="${gmapsUrl(p)}" target="_blank" rel="noopener" title="Open in Google Maps" onclick="event.stopPropagation()">Maps ↗</a>
+      </li>`;
+  }).join("");
+
+  const el = document.createElement("div");
+  el.id = "poiListPopup";
+  el.className = "poi-list-popup";
+  el.innerHTML = `
+    <div class="poi-pop-head" style="border-color:${accent}">
+      <span class="poi-pop-title">${title}</span>
+      <span class="poi-pop-count" style="background:${accent}">${list.length}</span>
+      <button class="poi-pop-close" aria-label="Close">×</button>
+    </div>
+    <div class="poi-pop-hint">Click a row to fly the map there · ↗ opens Google Maps</div>
+    <ul class="poi-pop-list">${rows || '<li class="poi-empty">None found in this area.</li>'}</ul>`;
+  document.body.appendChild(el);
+
+  el.querySelector(".poi-pop-close").onclick = () => el.remove();
+  el.querySelectorAll(".poi-row").forEach(row => {
+    row.onclick = () => {
+      const lat = Number(row.dataset.lat), lng = Number(row.dataset.lng);
+      if (map && !Number.isNaN(lat)) {
+        map.panTo({ lat, lng });
+        map.setZoom(16);
+        const mk = markers.find(m => m.poiName === row.dataset.name);
+        if (mk) google.maps.event.trigger(mk, "click");
+      }
+    };
+  });
+  // Dismiss on outside click / Esc.
+  setTimeout(() => {
+    const off = (e) => { if (!el.contains(e.target)) { el.remove(); document.removeEventListener("mousedown", off); } };
+    document.addEventListener("mousedown", off);
+  }, 0);
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key === "Escape") { el.remove(); document.removeEventListener("keydown", esc); }
+  });
 }
 
 // The 3 worst zones, spaced apart so they aren't one tight cluster.
@@ -634,14 +697,27 @@ function renderExecMini(data) {
     </div>
     <div class="em-stars">${stars}</div>
     ${ex.marketState ? `<div class="em-market">📍 ${boldKeywords(ex.marketState)}</div>` : ""}
-    ${ex.bottomLine ? `<ul class="em-points">${bulletize(ex.bottomLine).map(b => `<li>${boldKeywords(b)}</li>`).join("")}</ul>` : ""}
+    ${ex.bottomLine ? `<ul class="em-points">${bulletize(ex.bottomLine).map((b, i) => `<li><span class="em-bullet-icon">${bulletEmoji(b, i)}</span><span>${boldKeywords(b)}</span></li>`).join("")}</ul>` : ""}
     ${(ex.alternatives && ex.alternatives.length) ? `
       <div class="em-alts">
-        <div class="em-alts-label">Consider instead</div>
-        ${ex.alternatives.map(a => `<div class="em-alt">↪ ${boldKeywords(a)}</div>`).join("")}
+        <div class="em-alts-label">🧭 Consider instead</div>
+        ${ex.alternatives.map((a, i) => `<div class="em-alt"><span class="em-alt-pin">${["📍","🏙️","🌆","🏘️"][i % 4]}</span><span>${boldKeywords(a)}</span></div>`).join("")}
       </div>` : ""}
     <button class="em-cta"><i class="uil uil-file-alt"></i>Open full executive summary →</button>
   `;
+}
+
+// Pick a contextual emoji for an exec bullet from its wording, so the points read
+// less like a flat list. Falls back to a rotating neutral set.
+function bulletEmoji(text, i) {
+  const t = (text || "").toLowerCase();
+  if (/avoid|unviable|not\s|don't|weak|isolat|lack|sparse|unsuitable|reallocat/.test(t)) return "⚠️";
+  if (/strong|excellent|booming|thriving|high|growth|opportunit|prime|ideal|recommend/.test(t)) return "✅";
+  if (/competit|saturat|crowd|rival|overlap/.test(t)) return "⚔️";
+  if (/population|demand|footfall|consumer|residential/.test(t)) return "👥";
+  if (/infrastructure|connectivity|metro|road|transport|access/.test(t)) return "🛣️";
+  if (/real estate|property|price|wealth|affluen|income/.test(t)) return "💰";
+  return ["🔹", "📊", "📈", "🧩"][i % 4];
 }
 
 function recommendationLabel(rec) {
