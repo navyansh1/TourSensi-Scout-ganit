@@ -523,7 +523,8 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .score-breakdown .sb-read { text-align: left; padding-left: 10px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .score-breakdown tfoot td { border-top: 1.5px solid var(--border); padding-top: 8px; font-weight: 800; }
 .score-breakdown tfoot .sb-read { color: var(--text, #222); }
-.sb-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.45; }
+.sb-note { font-size: 11px; color: var(--muted); margin: 8px 0 0; padding-left: 16px; line-height: 1.5; }
+.sb-note li { margin-bottom: 2px; }
 .site-vs-market { font-size: 11px; color: var(--muted); margin-bottom: 14px; line-height: 1.45; }
 
 .listing {
@@ -565,7 +566,10 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   font-weight: 700; margin-top: 5px; }
 .stat-clickable { cursor: pointer; transition: transform .12s, box-shadow .12s, background .12s; position: relative; }
 .stat-clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.12); background: #fff; }
-.stat-info { font-size: 11px; opacity: 0.55; vertical-align: super; }
+.stat-info {
+  position: absolute; top: 6px; right: 7px;
+  font-size: 12px; line-height: 1; color: var(--ganit-blue); opacity: 0.5;
+}
 .stat-clickable:hover .stat-info { opacity: 1; }
 
 /* POI list popup (competitors / your sites) */
@@ -602,22 +606,22 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
    as scannable highlights instead of a flat paragraph block. */
 .exec-mini .em-points { margin: 12px 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
 .exec-mini .em-points li {
-  font-size: 13px; line-height: 1.5; color: #eef1ff; margin: 0;
+  font-size: 13px; line-height: 1.5; color: #f7f9ff; margin: 0;
   display: flex; gap: 9px; align-items: flex-start;
-  background: rgba(255,255,255,0.09); border-radius: 9px; padding: 8px 11px;
-  border-left: 3px solid rgba(255,255,255,0.35);
+  background: rgba(255,255,255,0.20); border-radius: 9px; padding: 8px 11px;
+  border-left: 3px solid var(--ganit-orange);
 }
 .exec-mini .em-bullet-icon { font-size: 15px; line-height: 1.35; flex-shrink: 0; }
 .exec-mini .em-points li strong, .exec-mini .em-market strong, .exec-mini .em-alt strong { color: #fff; font-weight: 800; }
 .exec-mini .em-market { font-size: 12px; line-height: 1.45; color: #fff;
-  background: rgba(255,255,255,0.16); border-radius: 8px; padding: 8px 11px; margin: 8px 0 4px;
+  background: rgba(255,255,255,0.24); border-radius: 8px; padding: 8px 11px; margin: 8px 0 4px;
   border-left: 3px solid var(--ganit-orange); }
 .exec-mini .em-alts { margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.22); padding-top: 10px; }
 .exec-mini .em-alts-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
   color: var(--ganit-orange-2); font-weight: 800; margin-bottom: 7px; }
-.exec-mini .em-alt { font-size: 12.5px; line-height: 1.45; color: #eef1ff;
+.exec-mini .em-alt { font-size: 12.5px; line-height: 1.45; color: #f7f9ff;
   display: flex; gap: 8px; align-items: flex-start; margin-bottom: 6px;
-  background: rgba(255,255,255,0.07); border-radius: 8px; padding: 7px 10px; }
+  background: rgba(255,255,255,0.18); border-radius: 8px; padding: 7px 10px; }
 .exec-mini .em-alt-pin { flex-shrink: 0; font-size: 14px; }
 .alts-list { display: flex; flex-direction: column; gap: 6px; }
 .alt-item { font-size: 13px; line-height: 1.5; color: var(--text-2); padding-left: 4px;

@@ -586,7 +586,8 @@ function renderResultStats(data) {
   // Clickable stat: shows a "ⓘ click" hint and opens a popup list of places.
   const stat = (value, label, color, clickKey) => `
     <div class="stat${clickKey ? " stat-clickable" : ""}" ${clickKey ? `data-poilist="${clickKey}"` : ""}>
-      <div class="stat-value" style="${color ? `color:${color}` : ""}">${value}${clickKey ? ` <span class="stat-info" title="Click to see the list">ⓘ</span>` : ""}</div>
+      ${clickKey ? `<span class="stat-info" title="Click to see the list">ⓘ</span>` : ""}
+      <div class="stat-value" style="${color ? `color:${color}` : ""}">${value}</div>
       <div class="stat-label">${label}</div>
     </div>`;
   return `
@@ -1423,9 +1424,12 @@ function renderScoreBreakdown(h, data) {
         </tr>
       </tfoot>
     </table>
-    <div class="sb-note">Each factor is scored 0–100 from real data, then multiplied by its
-      weight. The weighted points add up to the final score. Adjust the weights in
-      <strong>⚙️ Settings</strong> to match your priorities.</div>`;
+    <ul class="sb-note">
+      <li>Each factor scored 0–100 from real data</li>
+      <li>× its weight = points</li>
+      <li>Points add up to the final score</li>
+      <li>Tune weights in <strong>⚙️ Settings</strong></li>
+    </ul>`;
 }
 
 // ---- Settings: editable per-vertical weight sliders ---------------------
