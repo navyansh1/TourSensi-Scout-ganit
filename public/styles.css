@@ -47,14 +47,25 @@ html, body { margin: 0; padding: 0; height: 100%; background: var(--bg-2); color
 
 /* Custom map controls in the top bar */
 .map-controls { display: flex; align-items: center; gap: 6px; }
-.mc-group { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.mc-group { position: relative; display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .mc-btn {
+  position: relative; z-index: 1;
   padding: 7px 11px; font-size: 12px; font-weight: 600; border: none; border-radius: 0;
-  background: #fff; color: var(--text-2); cursor: pointer; transition: all 0.12s;
+  background: transparent; color: var(--text-2); cursor: pointer; transition: color 0.12s;
 }
 .mc-group .mc-btn + .mc-btn { border-left: 1px solid var(--border); }
-.mc-btn:hover { background: var(--bg-2); color: var(--ganit-blue); }
-.mc-btn.active { background: var(--ganit-blue); color: #fff; }
+.mc-group .mc-btn:hover { color: var(--ganit-blue); }
+/* Active text turns white; the sliding pill provides the blue background. */
+.mc-group .mc-btn.active { background: transparent; color: #fff; }
+.mc-group .mc-btn.active + .mc-btn, .mc-group .mc-btn.active { border-left-color: transparent; }
+
+/* Sliding highlight pill for the map-type group. */
+.mc-slider {
+  position: absolute; top: 0; bottom: 0; left: 0; transform: translateX(0);
+  background: var(--ganit-blue); z-index: 0; pointer-events: none;
+  transition: transform .32s cubic-bezier(.34, 1.2, .5, 1), width .32s cubic-bezier(.34, 1.2, .5, 1);
+}
+@media (prefers-reduced-motion: reduce) { .mc-slider { transition: none; } }
 .mc-toggle { border: 1px solid var(--border); border-radius: 8px; }
 .mc-toggle.active { background: var(--ganit-blue); color: #fff; border-color: var(--ganit-blue); }
 .mc-zoom { font-size: 16px; font-weight: 700; padding: 5px 12px; line-height: 1; }
@@ -521,6 +532,8 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .score-breakdown .sb-weight { color: var(--muted); }
 .score-breakdown .sb-points { font-weight: 700; }
 .score-breakdown .sb-read { text-align: left; padding-left: 10px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.score-breakdown .sb-subtotal td { border-top: 1px solid var(--border); padding-top: 7px; color: var(--muted); font-weight: 600; }
+.score-breakdown .sb-penalty td { color: #dc2626; font-weight: 600; }
 .score-breakdown tfoot td { border-top: 1.5px solid var(--border); padding-top: 8px; font-weight: 800; }
 .score-breakdown tfoot .sb-read { color: var(--text, #222); }
 .sb-note { font-size: 11px; color: var(--muted); margin: 8px 0 0; padding-left: 16px; line-height: 1.5; }
@@ -550,6 +563,21 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 
 /* ===== EXECUTIVE SUMMARY (sidebar mini card) ===== */
 /* Headline stat card */
+/* Collapse empty status / progress placeholders so they don't leave a big gap
+   below the Analyze button before any results exist. */
+#status:empty, #progressPanel:empty { display: none; }
+/* Divider above the results so the gap reads as an intentional section break. */
+#summary:not(.hidden) {
+  margin-top: 18px; padding-top: 20px;
+  border-top: 2px solid var(--border);
+  position: relative;
+}
+#summary:not(.hidden)::before {
+  content: "RESULTS";
+  position: absolute; top: -8px; left: 0;
+  background: var(--panel); padding-right: 10px;
+  font-size: 10px; font-weight: 800; letter-spacing: 1px; color: var(--ganit-blue);
+}
 .result-stats {
   background: #fff; border: 1px solid var(--border); border-radius: 12px;
   padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.04);
@@ -993,6 +1021,28 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
   border: none; background: transparent; color: var(--text-2);
   border-radius: 7px; cursor: pointer; transition: all .15s;
 }
+/* Mode-switch confirmation dialog */
+.confirm-overlay {
+  position: fixed; inset: 0; background: rgba(20, 16, 60, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 5000;
+  animation: cfFade .15s ease;
+}
+@keyframes cfFade { from { opacity: 0; } to { opacity: 1; } }
+.confirm-box {
+  background: #fff; border-radius: 16px; padding: 26px 26px 20px; width: 360px; max-width: 90vw;
+  text-align: center; box-shadow: 0 24px 70px rgba(0,0,0,0.32); animation: cfPop .18s cubic-bezier(.3,1.2,.5,1);
+}
+@keyframes cfPop { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.confirm-icon { font-size: 34px; margin-bottom: 8px; }
+.confirm-title { font-size: 18px; font-weight: 800; color: var(--text, #1a1a2e); margin-bottom: 8px; }
+.confirm-body { font-size: 13.5px; color: var(--text-2); line-height: 1.5; margin-bottom: 20px; }
+.confirm-actions { display: flex; gap: 10px; }
+.confirm-actions button { flex: 1; padding: 11px; border-radius: 9px; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.confirm-actions .confirm-cancel { border: 1px solid var(--border); background: #fff; color: var(--text-2); }
+.confirm-actions .confirm-cancel:hover { background: var(--bg-2); }
+.confirm-actions .confirm-ok { border: none; background: var(--ganit-blue); color: #fff; }
+.confirm-actions .confirm-ok:hover { filter: brightness(1.08); }
+
 .mode-btn { position: relative; z-index: 1; }
 .mode-btn:hover { color: var(--ganit-blue); }
 /* The active button's highlight is drawn by the sliding pill below, so the

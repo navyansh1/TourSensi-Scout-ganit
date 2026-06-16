@@ -109,11 +109,22 @@ function applyMapStyle() {
 }
 
 function initMapControls() {
-  // Map type buttons
+  // Map type buttons — with a sliding highlight pill (like the mode toggle).
+  const positionMapTypeSlider = (btn) => {
+    const slider = document.getElementById("mapTypeSlider");
+    if (!slider || !btn) return;
+    slider.style.width = `${btn.offsetWidth}px`;
+    slider.style.transform = `translateX(${btn.offsetLeft}px)`;
+  };
+  const mtActive = document.querySelector("#mapTypeGroup .mc-btn.active");
+  requestAnimationFrame(() => positionMapTypeSlider(mtActive));
+  window.addEventListener("resize", () => positionMapTypeSlider(document.querySelector("#mapTypeGroup .mc-btn.active")));
+
   document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(btn => {
     btn.onclick = () => {
       document.querySelectorAll("#mapTypeGroup .mc-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
+      positionMapTypeSlider(btn);
       map.setMapTypeId(btn.dataset.maptype);
       updateLabelsControlVisibility();
       applyMapStyle();
@@ -1408,26 +1419,52 @@ function renderScoreBreakdown(h, data) {
       </tr>`;
   }).join("");
   const total = keys.reduce((s, k) => s + h[k] * w[k], 0);
+  // The backend may pull the final BELOW the raw weighted total for genuinely
+  // weak sites (sparse rural population, no-build land, viability gate). When
+  // that happens, show the adjustment explicitly so the table reconciles to the
+  // final instead of looking like a maths error (44.5 → 19 with no explanation).
+  const adjustment = h.final - total;          // negative when penalised
+  const hasPenalty = adjustment <= -1.5;
+  let penaltyLabel = "Area adjustment";
+  if (h.signals?.noBuild) penaltyLabel = "🚫 No-build land penalty";
+  else if (hasPenalty) penaltyLabel = "📉 Sparse-area penalty";
+  const penaltyRow = hasPenalty ? `
+        <tr class="sb-penalty">
+          <td class="sb-factor">${penaltyLabel}</td>
+          <td></td><td></td>
+          <td class="sb-points" style="color:#dc2626">${adjustment.toFixed(1)}</td>
+          <td class="sb-read">thin demand / population</td>
+        </tr>` : "";
+
   return `
     <div class="subhead">How this score is built</div>
     <table class="score-breakdown">
       <thead>
         <tr><th>Factor</th><th>Score</th><th>Weight</th><th>Points</th><th></th></tr>
       </thead>
-      <tbody>${rows}</tbody>
+      <tbody>
+        ${rows}
+        <tr class="sb-subtotal">
+          <td class="sb-factor">Weighted subtotal</td>
+          <td></td><td></td>
+          <td class="sb-points">${total.toFixed(1)}</td>
+          <td class="sb-read"></td>
+        </tr>
+        ${penaltyRow}
+      </tbody>
       <tfoot>
         <tr>
-          <td class="sb-factor">Weighted total</td>
+          <td class="sb-factor">Final score</td>
           <td></td><td></td>
-          <td class="sb-points" style="color:${scoreColor(h.final)}">${total.toFixed(1)}</td>
-          <td class="sb-read">≈ ${h.final}/100</td>
+          <td class="sb-points" style="color:${scoreColor(h.final)}">${h.final}</td>
+          <td class="sb-read">/ 100</td>
         </tr>
       </tfoot>
     </table>
     <ul class="sb-note">
       <li>Each factor scored 0–100 from real data</li>
-      <li>× its weight = points</li>
-      <li>Points add up to the final score</li>
+      <li>× its weight = points; points sum to the subtotal</li>
+      ${hasPenalty ? `<li>Weak markets (sparse population, no-build land) are pulled down to the final</li>` : `<li>Subtotal is the final score</li>`}
       <li>Tune weights in <strong>⚙️ Settings</strong></li>
     </ul>`;
 }
@@ -2509,36 +2546,75 @@ function setupModeToggle() {
   btns.forEach((btn, idx) => {
     btn.onclick = () => {
       if (btn.classList.contains("active")) return;
-      const dir = idx > _modeIndex ? 1 : -1; // moving right vs left
-      _modeIndex = idx;
 
-      btns.forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      positionSlider(btn);            // slide the pill (CSS transitions transform)
+      const doSwitch = () => {
+        const dir = idx > _modeIndex ? 1 : -1; // moving right vs left
+        _modeIndex = idx;
 
-      const mode = btn.dataset.mode;
-      const panels = {
-        finder: document.getElementById("finderMode"),
-        planner: document.getElementById("plannerMode"),
-        loan: document.getElementById("loanMode"),
-      };
-      for (const [key, el] of Object.entries(panels)) {
-        if (!el) continue;
-        const show = key === mode;
-        el.classList.toggle("hidden", !show);
-        if (show) {
-          // Slide content in from the direction of travel: moving to a tab on
-          // the right → new panel enters from the right, and vice-versa.
-          el.classList.remove("mode-enter-left", "mode-enter-right");
-          void el.offsetWidth; // force reflow so the animation restarts
-          el.classList.add(dir > 0 ? "mode-enter-right" : "mode-enter-left");
+        btns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        positionSlider(btn);            // slide the pill (CSS transitions transform)
+
+        const mode = btn.dataset.mode;
+        const panels = {
+          finder: document.getElementById("finderMode"),
+          planner: document.getElementById("plannerMode"),
+          loan: document.getElementById("loanMode"),
+        };
+        for (const [key, el] of Object.entries(panels)) {
+          if (!el) continue;
+          const show = key === mode;
+          el.classList.toggle("hidden", !show);
+          if (show) {
+            // Slide content in from the direction of travel: moving to a tab on
+            // the right → new panel enters from the right, and vice-versa.
+            el.classList.remove("mode-enter-left", "mode-enter-right");
+            void el.offsetWidth; // force reflow so the animation restarts
+            el.classList.add(dir > 0 ? "mode-enter-right" : "mode-enter-left");
+          }
         }
+        // Keep the map controls relevant; each mode draws its own markers.
+        if (mode === "finder") clearPlannerMap();
+        else clearFinderMapForPlanner();
+        if (mode !== "planner") clearPlannerMap();
+      };
+
+      // Warn before discarding work: a completed Site Finder analysis, an
+      // in-progress planner upload, or planner results would be lost on switch.
+      const hasWork = !!lastResult || !!plannerResultData ||
+        (Array.isArray(plannerLocations) && plannerLocations.length > 0);
+      if (hasWork) {
+        confirmModeSwitch(doSwitch);
+      } else {
+        doSwitch();
       }
-      // Keep the map controls relevant; each mode draws its own markers.
-      if (mode === "finder") clearPlannerMap();
-      else clearFinderMapForPlanner();
-      if (mode !== "planner") clearPlannerMap();
     };
+  });
+}
+
+// Confirmation popup shown when switching modes would discard existing results.
+function confirmModeSwitch(onConfirm) {
+  document.getElementById("modeSwitchConfirm")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "modeSwitchConfirm";
+  overlay.className = "confirm-overlay";
+  overlay.innerHTML = `
+    <div class="confirm-box" role="dialog" aria-modal="true">
+      <div class="confirm-icon">⚠️</div>
+      <div class="confirm-title">Switch modes?</div>
+      <div class="confirm-body">You'll lose the current results and progress on screen. This can't be undone.</div>
+      <div class="confirm-actions">
+        <button class="ghost confirm-cancel">Stay here</button>
+        <button class="primary confirm-ok">Yes, switch</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".confirm-cancel").onclick = close;
+  overlay.querySelector(".confirm-ok").onclick = () => { close(); onConfirm(); };
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); }
   });
 }
 
