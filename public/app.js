@@ -1551,6 +1551,8 @@ function renderWeightSliders() {
   if (tag) tag.textContent = "(" + vertical.replace("_", " ") + ")";
   const w = effectiveWeights(vertical, lastResult?.weights);
   const keys = ["demand", "saturation", "access", "growth"];
+  // `w` is already normalised to sum to 1. Use it as the raw slider position too,
+  // so on first render the slider position and the shown effective % agree.
   wrap.innerHTML = keys.map(k => `
     <div class="weight-row">
       <label>${FACTOR_META[k].label}</label>
@@ -1560,7 +1562,7 @@ function renderWeightSliders() {
   wrap.querySelectorAll("input[type=range]").forEach(inp => {
     inp.oninput = onWeightSliderInput;
   });
-  updateWeightTotal();
+  syncWeightLabels();
 }
 
 function readSliderWeights() {
@@ -1575,24 +1577,37 @@ function readSliderWeights() {
 }
 
 function onWeightSliderInput() {
-  const wrap = document.getElementById("weightSliders");
-  wrap.querySelectorAll("input[type=range]").forEach(inp => {
-    const span = wrap.querySelector(`[data-val="${inp.dataset.key}"]`);
-    if (span) span.textContent = inp.value + "%";
-  });
-  updateWeightTotal();
+  syncWeightLabels();
   const weights = readSliderWeights();
   saveWeightOverride(currentSettingsVertical(), weights);
   applyLiveWeights();
 }
 
-function updateWeightTotal() {
+// Show the NORMALISED (effective) weight next to each slider, not its raw drag
+// position. The engine divides every weight by the running total, so a slider at
+// 50 while the others sum to 90 actually contributes 50/140 ≈ 36%. Displaying the
+// raw 50 was misleading (sliders appeared to sum to 140%); we instead show the
+// real applied share, which always sums to 100%.
+function syncWeightLabels() {
   const wrap = document.getElementById("weightSliders");
   const el = document.getElementById("weightTotal");
-  if (!wrap || !el) return;
-  let sum = 0;
-  wrap.querySelectorAll("input[type=range]").forEach(inp => sum += Number(inp.value));
-  el.textContent = sum + "% → normalised to 100%";
+  if (!wrap) return;
+  const norm = readSliderWeights(); // normalised, sums to ~1
+  // Round each to a whole %, then fix rounding drift so they sum to exactly 100.
+  const keys = Object.keys(norm);
+  const pct = {};
+  keys.forEach(k => pct[k] = Math.round(norm[k] * 100));
+  let drift = 100 - keys.reduce((s, k) => s + pct[k], 0);
+  if (drift !== 0) {
+    // Nudge the largest weight to absorb the ±1–2 rounding remainder.
+    const biggest = keys.reduce((a, b) => (pct[b] > pct[a] ? b : a), keys[0]);
+    pct[biggest] += drift;
+  }
+  keys.forEach(k => {
+    const span = wrap.querySelector(`[data-val="${k}"]`);
+    if (span) span.textContent = pct[k] + "%";
+  });
+  if (el) el.textContent = "Effective weights · always sums to 100%";
 }
 
 // Re-score the loaded result in place under the current weights — no server call.
@@ -2022,6 +2037,7 @@ function renderCompareTable(sites) {
 function renderMarketSnapshot(data) {
   const pop = data.population;
   const pq = data.placeQuality;
+  const nl = data.nightlights;
   const cards = [];
 
   const fmtInt = (n) => Math.round(n).toLocaleString("en-IN");
@@ -2038,6 +2054,27 @@ function renderMarketSnapshot(data) {
         <div class="ms-label">Population Density</div>
         <div class="ms-value">${fmtInt(pop.densityPerKm2)}</div>
         <div class="ms-sub">people / km²</div>
+      </div>`);
+  }
+
+  // Night-time lights: area economic vitality + 3-yr brightening trend (VIIRS).
+  // Vitality is a fresh, satellite-derived "is this area lit & active" signal;
+  // the trend says whether it's rising or fading over time.
+  if (nl && typeof nl.vitality === "number") {
+    let trendStr = "satellite-derived activity";
+    if (typeof nl.trendDelta === "number") {
+      const t = nl.trendDelta;
+      const arrow = t > 1 ? "↑" : t < -1 ? "↓" : "→";
+      const word = t > 1 ? "brightening" : t < -1 ? "dimming" : "stable";
+      trendStr = `${arrow} ${t >= 0 ? "+" : ""}${t} 3-yr · ${word}`;
+    }
+    const tone = nl.trendDelta == null ? "inherit"
+      : nl.trendDelta > 1 ? "var(--good)" : nl.trendDelta < -1 ? "var(--bad)" : "inherit";
+    cards.push(`
+      <div class="ms-card">
+        <div class="ms-label">🛰️ Nightlight Vitality</div>
+        <div class="ms-value" style="color:${tone}">${nl.vitality}<span style="font-size:.55em;opacity:.6">/100</span></div>
+        <div class="ms-sub">${trendStr}</div>
       </div>`);
   }
 

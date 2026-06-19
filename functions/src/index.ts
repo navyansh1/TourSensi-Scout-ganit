@@ -19,6 +19,7 @@ import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
+import { bboxNightlights, trendToGrowthNudge } from "./nightlights";
 import { runGrowthAgent, aiPropertyEstimate, aiSiteRevenue } from "./agent";
 import { planExpansion } from "./portfolio";
 import { analyzeSite, type SiteAnalysisInput } from "./siteAnalysis";
@@ -112,7 +113,7 @@ router.post("/analyze-stream", async (req, res) => {
     send("progress", { step: "overlay", label: `🗺️ ${contextPois.length} nearby context POIs mapped`, done: true });
     const contextBrief = areaContextBrief(vertical, contextPois, { lat: geo.lat, lng: geo.lng });
 
-    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, population, agent] = await Promise.allSettled([
+    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, population, nightlights, agent] = await Promise.allSettled([
       competitorsInArea({ category: placeType, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000 })
         .then(r => { send("progress", { step: "competitors", label: `🔴 ${r.length} competitor POIs found`, done: true }); return r; }),
       (company
@@ -129,6 +130,11 @@ router.post("/analyze-stream", async (req, res) => {
       getRealEstateSignals({ city: geo.city, area: geo.area })
         .then(r => { send("progress", { step: "realestate", label: `🏠 ${r.sampleSize} listings, ${r.listings?.length ?? 0} sampled`, done: true }); return r; }),
       bboxPopulation(geo.bbox).catch(() => null),
+      // Night-time lights (VIIRS) — area-level economic vitality + 3-yr brightening
+      // trend. Fresh (monthly), free, fails open. Feeds the growth signal.
+      bboxNightlights(geo.bbox)
+        .then(r => { if (r) send("progress", { step: "nightlights", label: `🛰️ Nightlights vitality ${r.vitality}/100${r.trendDelta != null ? ` · ${r.trendDelta >= 0 ? "+" : ""}${r.trendDelta} 3-yr trend` : ""}`, done: true }); return r; })
+        .catch(() => null),
       cachedGrowthAgent(geo.area, geo.city, contextBrief)
         .then(r => { send("progress", { step: "agent", label: `🤖 Growth ${r.growthScore}/100 · ${r.trail.length} searches · 4 quadrants`, done: true }); return r; }),
     ]);
@@ -142,6 +148,7 @@ router.post("/analyze-stream", async (req, res) => {
     let reSignals = realEstate.status === "fulfilled" ? realEstate.value : null;
     reSignals = await withAiPropertyFallback(reSignals, geo.area, geo.city);
     const popData = population.status === "fulfilled" ? population.value : null;
+    const nightData = nightlights.status === "fulfilled" ? nightlights.value : null;
     const fallbackAgent = {
       area: geo.area, city: geo.city, growthScore: 50,
       reasoning: "(agent unavailable)", trail: [] as any[],
@@ -154,6 +161,22 @@ router.post("/analyze-stream", async (req, res) => {
       ],
     };
     const agentResult: any = agent.status === "fulfilled" ? agent.value : fallbackAgent;
+
+    // Satellite growth nudge: tilt the AI growth prior by the 3-yr nightlight
+    // brightening trend (capped ±10). Brightening areas read as rising; dimming
+    // ones get pulled down. Applied to both the area score and each quadrant so
+    // the heatmap reflects it. Bounded so the satellite reading can only tilt the
+    // analyst-grade narrative, never override it.
+    const growthNudge = trendToGrowthNudge(nightData?.trendDelta ?? null);
+    if (growthNudge !== 0) {
+      const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+      agentResult.growthScore = clamp(agentResult.growthScore + growthNudge);
+      if (Array.isArray(agentResult.quadrantScores)) {
+        agentResult.quadrantScores = agentResult.quadrantScores.map((q: any) => ({
+          ...q, growthScore: clamp(q.growthScore + growthNudge),
+        }));
+      }
+    }
 
     send("progress", { step: "score", label: "📊 Scoring hexes…" });
     const centers = hexCenters(geo.bbox);
@@ -208,6 +231,7 @@ router.post("/analyze-stream", async (req, res) => {
       wiki: wikiInfo,
       pin: pinInfoData,
       population: popData,
+      nightlights: nightData,
       agent: {
         trailId,
         growthScore: agentResult.growthScore,
