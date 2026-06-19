@@ -626,10 +626,11 @@ router.get("/agent-trail/:id", async (req, res) => {
 router.post("/share", async (req, res) => {
   try {
     const result = req.body?.result;
+    const kind = typeof req.body?.kind === "string" ? req.body.kind : "site";
     if (!result || typeof result !== "object") { res.status(400).json({ error: "result is required" }); return; }
     const id = Math.random().toString(36).slice(2, 10);
     await admin.firestore().collection("shared_results").doc(id).set({
-      result, createdAt: Date.now(),
+      result, kind, createdAt: Date.now(),
     });
     res.json({ id });
   } catch (e) {

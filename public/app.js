@@ -39,14 +39,40 @@ const TAG_LABELS = {
   await maybeLoadSharedResult();
 })();
 
-// If the URL has ?r=<id>, fetch that shared snapshot and re-render it exactly.
+// If the URL has ?r=<id> (Site Finder) or ?lr=<id> (Collateral Check), fetch
+// that shared snapshot and re-render it exactly.
 async function maybeLoadSharedResult() {
-  const id = new URLSearchParams(location.search).get("r");
-  if (!id) return;
+  const params = new URLSearchParams(location.search);
+  const siteId = params.get("r");
+  const loanId = params.get("lr");
+  const plannerId = params.get("pr");
+  if (!siteId && !loanId && !plannerId) return;
   try {
+    const id = siteId || loanId || plannerId;
     setStatus("Loading shared analysis…");
     const doc = await fetch(`${RUN}/share/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null);
     if (!doc?.result) { setStatus("Shared link not found or expired.", "error"); return; }
+
+    if (doc.kind === "loan" || loanId) {
+      // Switch to Collateral Check mode and render the shared loan read.
+      switchToMode("loan");
+      renderLoanAnalysis(doc.result);
+      const ls = document.getElementById("loanStatus");
+      if (ls) { ls.textContent = "📤 Viewing a shared collateral read."; ls.className = "status ok"; }
+      return;
+    }
+
+    if (doc.kind === "planner" || plannerId) {
+      // Switch to Expansion Planner mode and render the shared network plan.
+      switchToMode("planner");
+      plannerResultData = doc.result;
+      if (doc.result.vertical) { const v = document.getElementById("plannerVertical"); if (v) v.value = doc.result.vertical; }
+      renderPlanner(doc.result);
+      const ps = document.getElementById("plannerStatus");
+      if (ps) { ps.textContent = "📤 Viewing a shared expansion plan."; ps.className = "status ok"; }
+      return;
+    }
+
     lastResult = doc.result;
     // Reflect the shared inputs into the form so a viewer can fork/re-run.
     if (doc.result.vertical) { const v = document.getElementById("vertical"); if (v) v.value = doc.result.vertical; }
@@ -56,6 +82,48 @@ async function maybeLoadSharedResult() {
   } catch (e) {
     console.error(e);
     setStatus("Could not load shared analysis.", "error");
+  }
+}
+
+// Programmatically activate a mode tab (used when opening a shared link or the
+// top-bar share). Clicks the matching mode button if it isn't already active.
+function switchToMode(mode) {
+  const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+  if (btn && !btn.classList.contains("active")) btn.click();
+}
+
+// Top-bar Share — shares whichever result is currently on screen (Site Finder,
+// Expansion Planner or Collateral Check), so the user can share from one place.
+function topBarShare(btn) {
+  const loanVisible = !document.getElementById("loanMode")?.classList.contains("hidden");
+  const plannerVisible = !document.getElementById("plannerMode")?.classList.contains("hidden");
+  if (loanVisible && lastLoanAnalysis) return shareLoanAnalysis(btn);
+  if (plannerVisible && plannerResultData) return sharePlannerResult(btn);
+  if (lastResult) return shareCurrentResult(btn);
+  setStatus("Run an analysis first, then share it.", "hint");
+}
+
+// Share the current Expansion Planner result as a snapshot link (?pr=<id>).
+async function sharePlannerResult(btn) {
+  if (!plannerResultData) return;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<i class="uil uil-spinner"></i> Sharing…';
+  try {
+    const { id } = await fetch(`${RUN}/share`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result: plannerResultData, kind: "planner" }),
+    }).then(r => r.json());
+    if (!id) throw new Error("no id");
+    const url = `${location.origin}${location.pathname}?pr=${id}`;
+    try { await navigator.clipboard.writeText(url); } catch { /* clipboard may be blocked */ }
+    btn.innerHTML = '<i class="uil uil-check"></i> Link copied!';
+    const ps = document.getElementById("plannerStatus");
+    if (ps) { ps.textContent = `📤 Share link ready: ${url}`; ps.className = "status ok"; }
+  } catch (e) {
+    console.error(e);
+    btn.innerHTML = '<i class="uil uil-exclamation-triangle"></i> Failed';
+  } finally {
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 2500);
   }
 }
 
@@ -279,6 +347,7 @@ async function loadCompanies() {
 function bindUI() {
   document.getElementById("analyzeBtn").onclick = onAnalyze;
   document.getElementById("shareBtn")?.addEventListener("click", (e) => shareCurrentResult(e.currentTarget));
+  document.getElementById("topShareBtn")?.addEventListener("click", (e) => topBarShare(e.currentTarget));
   document.getElementById("trailToggle").onclick = (e) => {
     const t = document.getElementById("trail");
     t.classList.toggle("hidden");
@@ -2955,8 +3024,8 @@ function renderPlanner(data) {
   const r = data.regional;
   document.getElementById("plannerStats").innerHTML = `
     <div class="pstat"><div class="pstat-num">${data.sites.length}</div><div class="pstat-lbl">Your sites</div></div>
-    <div class="pstat"><div class="pstat-num">${r.avgHealth}</div><div class="pstat-lbl">Avg health</div></div>
-    <div class="pstat"><div class="pstat-num" style="color:#dc2626">${r.weakCount}</div><div class="pstat-lbl">Weak sites</div></div>
+    <div class="pstat" title="Strength of the demand environment AROUND each site (footfall, closures, density) — not the store's own sales. Average across your network."><div class="pstat-num">${r.avgHealth}</div><div class="pstat-lbl">Avg catchment</div></div>
+    <div class="pstat" title="Sites sitting in a weak catchment (strength below 42)."><div class="pstat-num" style="color:#dc2626">${r.weakCount}</div><div class="pstat-lbl">Weak catchments</div></div>
     <div class="pstat"><div class="pstat-num">${data.gaps.length}</div><div class="pstat-lbl">Expand here</div></div>
   `;
 
@@ -3052,21 +3121,29 @@ async function openPlannerAnalysis(kind, item) {
     : escapeHtml(item.name);
   const scoreLine = kind === "gap"
     ? `Score ${item.score}/100`
-    : `Health ${item.health}/100 · ${item.verdict}`;
+    : `Catchment ${item.health}/100 · ${item.verdict}`;
 
   document.querySelector("#hexPanel h3").textContent = title;
+
+  // For an existing site, show the transparent "why this Catchment Strength"
+  // breakdown immediately (it's already in the portfolio data) — so the score
+  // is explainable even before the deep AI returns.
+  const catchmentHtml = (kind === "site" && Array.isArray(item.factors) && item.factors.length)
+    ? renderFactorBreakdown(item.factors, "Why this Catchment Strength")
+    : "";
 
   // Cache hit → render instantly, no re-fetch on revisit.
   const cacheKey = `${kind}:${item.lat},${item.lng}`;
   if (plannerAnalysisCache[cacheKey]) {
     document.getElementById("hexBody").innerHTML =
-      `<div style="margin-bottom:12px"><span class="final-pill" style="background:${accent}">${scoreLine}</span></div><div id="paWrap"></div>`;
+      `<div style="margin-bottom:12px"><span class="final-pill" style="background:${accent}">${scoreLine}</span></div>${catchmentHtml}<div id="paWrap"></div>`;
     renderSiteAnalysis(plannerAnalysisCache[cacheKey], accent);
     return;
   }
 
   document.getElementById("hexBody").innerHTML = `
     <div style="margin-bottom:12px"><span class="final-pill" style="background:${accent}">${scoreLine}</span></div>
+    ${catchmentHtml}
     <div id="paWrap" class="zone-insight loading">
       <div class="zi-spinner"><span class="spinner"></span> Deep-analysing with AI — reading nearby reviews & running grounded searches (~5-8s)…</div>
     </div>`;
@@ -3091,6 +3168,23 @@ async function openPlannerAnalysis(kind, item) {
     const w = document.getElementById("paWrap");
     if (w) w.innerHTML = `<span class="status error">Analysis failed: ${escapeHtml(e.message)}</span>`;
   }
+}
+
+// Transparent factor breakdown — each signal that moved a score, with a +/−/=
+// dot and a plain-English note. Used for existing-site Catchment Strength so the
+// number is never a black box.
+function renderFactorBreakdown(factors, heading) {
+  const dot = { positive: "▲", negative: "▼", neutral: "■" };
+  const col = { positive: "#16a34a", negative: "#dc2626", neutral: "#9aa1b2" };
+  const rows = (factors || []).map(f => `
+    <div class="fb-row">
+      <span class="fb-dot" style="color:${col[f.impact] || "#9aa1b2"}">${dot[f.impact] || "■"}</span>
+      <div class="fb-body">
+        <div class="fb-line"><strong>${escapeHtml(f.label)}</strong> — ${escapeHtml(f.value)}</div>
+        ${f.weightNote ? `<div class="fb-note">${escapeHtml(f.weightNote)}</div>` : ""}
+      </div>
+    </div>`).join("");
+  return `<div class="pa-h">${escapeHtml(heading || "Why this score")}</div><div class="fb">${rows}</div>`;
 }
 
 function renderSiteAnalysis(a, accent) {
@@ -3215,6 +3309,7 @@ function drawPlannerMarkers(data, lookups = {}) {
 let loanMarker = null;
 let loanPinMode = false;       // map-click drops the collateral pin
 let loanPinned = null;         // { lat, lng } chosen via pin
+let lastLoanAnalysis = null;   // last collateral read, for share + PDF
 
 function setupLoan() {
   const btn = document.getElementById("loanRunBtn");
@@ -3332,6 +3427,7 @@ async function runLoanAnalysis() {
   if (!location && !loanPinned) { status.textContent = "Enter an address or drop a pin on the map."; status.className = "status error"; return; }
   status.textContent = ""; status.className = "status";
   btn.disabled = true;
+  btn.classList.add("analyzing");   // orange shimmer scan-line, same as Site Finder
   document.getElementById("loanResult").classList.add("hidden");
   startLoanProgress();
 
@@ -3357,6 +3453,7 @@ async function runLoanAnalysis() {
     status.className = "status error";
   } finally {
     btn.disabled = false;
+    btn.classList.remove("analyzing");
   }
 }
 
@@ -3433,8 +3530,16 @@ function renderLoanAnalysis(a) {
       ${a.summary ? `<div class="pa-bottom">${escapeHtml(a.summary)}</div>` : ""}
       ${nearby ? `<div class="pa-h">Nearby businesses</div><div class="pa-comps">${nearby}</div>` : ""}
       ${src ? `<div class="pa-sources">Sources: ${src}</div>` : ""}
+      <div class="loan-actions">
+        <button id="loanShareBtn" class="ghost mini"><i class="uil uil-share-alt"></i>Share</button>
+        <button id="loanPdfBtn" class="ghost mini"><i class="uil uil-file-download-alt"></i>Save as PDF</button>
+      </div>
       <div class="loan-disclaimer compact">⚖️ Geographic decision-support only — not a lending verdict. No title/legal/credit checks performed.</div>
     </div>`;
+
+  lastLoanAnalysis = a;  // keep for share + PDF
+  document.getElementById("loanShareBtn")?.addEventListener("click", (e) => shareLoanAnalysis(e.currentTarget));
+  document.getElementById("loanPdfBtn")?.addEventListener("click", saveLoanPdf);
 
   // Drop a pin + glide the map.
   if (loanMarker) { loanMarker.setMap(null); loanMarker = null; }
@@ -3445,4 +3550,82 @@ function renderLoanAnalysis(a) {
     });
     map.panTo({ lat: a.lat, lng: a.lng }); map.setZoom(15);
   }
+}
+
+// Share the current Collateral Check read as a snapshot link (?lr=<id>).
+async function shareLoanAnalysis(btn) {
+  if (!lastLoanAnalysis) return;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<i class="uil uil-spinner"></i> Sharing…';
+  try {
+    const { id } = await fetch(`${RUN}/share`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result: lastLoanAnalysis, kind: "loan" }),
+    }).then(r => r.json());
+    if (!id) throw new Error("no id");
+    const url = `${location.origin}${location.pathname}?lr=${id}`;
+    try { await navigator.clipboard.writeText(url); } catch { /* clipboard may be blocked */ }
+    btn.innerHTML = '<i class="uil uil-check"></i> Link copied!';
+    document.getElementById("loanStatus").textContent = `📤 Share link ready: ${url}`;
+  } catch (e) {
+    console.error(e);
+    btn.innerHTML = '<i class="uil uil-exclamation-triangle"></i> Failed';
+  } finally {
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 2500);
+  }
+}
+
+// Save the Collateral Check read as a print-to-PDF report (same popup+print
+// approach as the executive summary — no external library).
+function saveLoanPdf() {
+  const a = lastLoanAnalysis;
+  if (!a) return;
+  const report = window.open("", "_blank");
+  if (!report) return alert("Allow pop-ups to save the collateral read as PDF.");
+  report.document.write(buildLoanReportHtml(a));
+  report.document.close();
+  setTimeout(() => report.print(), 500);
+}
+
+function buildLoanReportHtml(a) {
+  const sigColor = { FAVOURABLE: "#16a34a", MIXED: "#d97706", UNFAVOURABLE: "#dc2626" }[a.geographicSignal] || "#d97706";
+  const npaColor = { LOW: "#16a34a", MODERATE: "#d97706", ELEVATED: "#dc2626" }[a.npaRisk?.band] || "#d97706";
+  const ul = (arr) => `<ul>${(arr || []).map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+  const closedPct = Math.round((a.evidence?.closedShare || 0) * 100);
+  const staticMap = (a.lat != null && a.lng != null && mapsBrowserKey)
+    ? `https://maps.googleapis.com/maps/api/staticmap?center=${a.lat},${a.lng}&zoom=14&size=640x300&scale=2&markers=color:0x${sigColor.slice(1)}|${a.lat},${a.lng}&key=${mapsBrowserKey}`
+    : "";
+  return `<!doctype html><html><head><meta charset="utf-8" />
+    <title>Collateral Check — ${escapeHtml(a.locality || "")}</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #1a1d2b; margin: 32px; line-height: 1.5; }
+      h1 { color: #1a00d9; margin: 0 0 4px; font-size: 22px; }
+      h2 { color: #fe6e06; font-size: 13px; margin-top: 22px; text-transform: uppercase; border-left: 4px solid #fe6e06; padding-left: 8px; }
+      .meta { color: #6b7390; margin-bottom: 12px; font-size: 13px; }
+      .pill { display: inline-block; padding: 5px 12px; border-radius: 16px; color: #fff; font-weight: bold; font-size: 12px; }
+      .snapshot { width: 100%; max-width: 640px; border: 1px solid #e1e5ee; border-radius: 8px; margin: 14px 0; }
+      .box { background: #f6f7fb; border-left: 4px solid #1a00d9; padding: 12px 14px; border-radius: 0 8px 8px 0; font-weight: 600; color: #1a00d9; margin-top: 14px; }
+      ul { padding-left: 20px; margin: 6px 0; } li { margin-bottom: 3px; }
+      .disc { margin-top: 22px; font-size: 11px; color: #9a3412; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px 12px; }
+      .npa-note { font-size: 11px; color: #6b7280; font-style: italic; margin-top: 4px; }
+    </style></head><body>
+    <h1>Collateral Check — Geographic Read</h1>
+    <div class="meta">${escapeHtml(a.locality || "")} ${a.lat != null ? `· ${a.lat.toFixed(5)}, ${a.lng.toFixed(5)}` : ""}</div>
+    <span class="pill" style="background:${sigColor}">${escapeHtml(a.geographicSignal || "")} (geographic)</span>
+    <div style="margin-top:6px">${escapeHtml(a.setting || "")}${a.valueBand ? ` · approx ${escapeHtml(a.valueBand)}` : ""}</div>
+    ${staticMap ? `<img class="snapshot" src="${staticMap}" alt="Location map" />` : ""}
+    ${a.npaRisk ? `<h2>🏦 Geographic NPA-risk read</h2>
+      <span class="pill" style="background:${npaColor}">${a.npaRisk.band}</span> <strong>${a.npaRisk.score}/100 geographic risk</strong>
+      ${ul(a.npaRisk.drivers)}<div class="npa-note">${escapeHtml(a.npaRisk.disclaimer || "")}</div>` : ""}
+    ${(a.agri && (a.agri.nearestWater || a.agri.farmedNearby)) ? `<h2>🚜 Irrigation & water access</h2>
+      <strong>${a.agri.waterAccessScore}/100 water access</strong>${a.agri.farmedNearby ? ` · ${a.agri.farmlandCount} farmland parcels nearby` : ""}
+      ${ul((a.agri.waters || []).slice(0,4).map(w => `${w.name} — ${w.kind}, ${w.distanceM >= 1000 ? (w.distanceM/1000).toFixed(1)+" km" : w.distanceM+" m"}`))}` : ""}
+    ${a.waterAndRisk?.length ? `<h2>💧 Water & risk</h2>${ul(a.waterAndRisk)}` : ""}
+    ${a.rainfall ? `<h2>🌧️ Rainfall & repayment capacity</h2><ul><li>~${a.rainfall.avgAnnualMm} mm/yr over ~${a.rainfall.avgRainyDays} rainy days — <strong>${a.rainfall.band}</strong></li><li>${escapeHtml(a.rainfall.note || "")}</li></ul>` : ""}
+    ${a.locationFactors?.length ? `<h2>📍 Location</h2>${ul(a.locationFactors)}` : ""}
+    ${a.commercialHealth?.length ? `<h2>🏬 Area business health (${closedPct}% nearby shut)</h2>${ul(a.commercialHealth)}` : ""}
+    ${a.redFlags?.length ? `<h2>⚠️ Red flags</h2>${ul(a.redFlags)}` : ""}
+    ${a.summary ? `<div class="box">${escapeHtml(a.summary)}</div>` : ""}
+    <div class="disc">⚖️ Geographic decision-support only — not a lending verdict. No title, legal, ownership or credit checks performed. Combine with CIBIL, income and title verification.</div>
+    </body></html>`;
 }

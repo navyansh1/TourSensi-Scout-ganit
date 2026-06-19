@@ -229,7 +229,12 @@ Be PUNCHY: every bullet ONE short line (≤ 12 words), concrete, number where po
   const arr = (x: any, n: number) => Array.isArray(x) ? x.map((s: any) => String(s)).slice(0, n) : [];
   // Lead the water/risk section with the satellite-confirmed flood fact (it's
   // ground-truth, so it outranks the AI's web-sourced guesses), then the AI's.
-  const waterAndRisk = arr(parsed.waterAndRisk, 4);
+  let waterAndRisk = arr(parsed.waterAndRisk, 4);
+  // De-dupe rainfall: when we show the dedicated Rainfall card, the AI's own
+  // rainfall bullets here are redundant (the panel showed "marginal rainfall"
+  // three times). Drop the AI's rainfall lines and let the structured card own
+  // that fact; we still lead with our authoritative one-line rainfall note.
+  if (rainfall) waterAndRisk = waterAndRisk.filter(b => !/rain ?fall|mm\/yr|drought/i.test(b));
   // Irrigation-access read (water nearby = good) for agri/land, ahead of the
   // AI's web bullets but after the authoritative satellite/rainfall facts.
   if (agri && (agri.nearestWater || agri.farmedNearby)) waterAndRisk.unshift(`🚜 ${agri.note}`);

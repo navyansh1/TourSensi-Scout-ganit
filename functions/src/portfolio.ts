@@ -54,6 +54,7 @@ export interface PortfolioSite {
   populationDensity: number | null;
   verdict: "STRONG" | "STABLE" | "WEAK";
   note: string;
+  factors: ScoreFactor[];    // transparent "why this catchment-strength score" breakdown
 }
 
 // One transparent scoring factor — the building blocks of "why here".
@@ -257,6 +258,43 @@ export async function planExpansion(opts: {
     if (q.avgRating != null && q.avgRating >= 4.2) noteParts.push("thriving, well-rated commerce around it");
     const note = noteParts.length ? noteParts.join("; ") : "stable catchment";
 
+    // Transparent breakdown of what drove this site's Catchment Strength, so a
+    // user can click a dot and see WHY it's green/amber/red — no black box.
+    const factors: ScoreFactor[] = [
+      {
+        label: "Footfall index",
+        value: `${footfallIndex}/100 (review volume + anchors + density nearby)`,
+        impact: footfallIndex >= 60 ? "positive" : footfallIndex >= 40 ? "neutral" : "negative",
+        weightNote: "the demand environment around this site",
+      },
+      {
+        label: "Shuttered businesses",
+        value: `${Math.round(q.closedShare * 100)}% of nearby businesses permanently closed`,
+        impact: q.closedShare >= 0.2 ? "negative" : q.closedShare >= 0.1 ? "neutral" : "positive",
+        weightNote: closedPenalty > 0 ? `−${Math.round(closedPenalty)} (dying high street)` : "no drag",
+      },
+      {
+        label: "Competitor ratings",
+        value: q.avgRating != null ? `★${q.avgRating.toFixed(1)} avg across ${competitors.length} nearby` : "no rated competitors nearby",
+        impact: q.avgRating != null && q.avgRating >= 4.0 ? "positive" : "neutral",
+        weightNote: "thriving commerce = stronger catchment",
+      },
+      {
+        label: "Population density",
+        value: popData?.densityPerKm2 != null ? `${popData.densityPerKm2.toLocaleString("en-IN")} people/km² (${densityLabel(popData.densityPerKm2)})` : "unknown",
+        impact: popData?.densityPerKm2 != null && popData.densityPerKm2 >= 8000 ? "positive" : "neutral",
+        weightNote: "area-wide demand base",
+      },
+    ];
+    if (thinPenalty > 0) {
+      factors.push({
+        label: "Thin footfall penalty",
+        value: `footfall below 35 → −${Math.round(thinPenalty)}`,
+        impact: "negative",
+        weightNote: "weak local demand signal",
+      });
+    }
+
     return {
       name: site.name, lat: site.lat, lng: site.lng,
       branchId: site.branchId, type: site.type,
@@ -265,7 +303,7 @@ export async function planExpansion(opts: {
       avgCompetitorRating: q.avgRating,
       closedShare: q.closedShare,
       populationDensity: popData?.densityPerKm2 ?? null,
-      verdict, note,
+      verdict, note, factors,
     };
   });
 
@@ -455,13 +493,21 @@ async function findGaps(opts: {
     });
   }
 
-  // Diversify: sort by score, then greedily pick spread-out winners so the top
-  // gaps aren't all clustered in one neighbourhood.
+  // Diversify (p-dispersion heuristic): sort by score, then greedily pick the
+  // best candidates subject to a MINIMUM SEPARATION between picks. The correct
+  // separation is NOT a magic constant — it scales with the vertical's trade
+  // area. Two NEW sites should be at least far enough apart that their own trade
+  // areas don't overlap, i.e. so they don't cannibalise each other. Empirically
+  // cannibalisation falls to ~0 well beyond the trade radius, and the formal
+  // model for "spread out N sites" (p-dispersion) maximises the min pairwise
+  // distance — so 2× the trade-area radius is the principled minimum.
+  //   ATM 0.8→1.6km · Retail 1.2→2.4km · Branch 1.5→3.0km · Warehouse 3.0→6.0km
+  const minSeparationKm = tradeKm * 2;
   candidates.sort((a, b) => b.score - a.score);
   const picks: ExpansionGap[] = [];
   for (const c of candidates) {
     if (picks.length >= 6) break;
-    if (picks.some(p => haversineKm(p, c) < 1.5)) continue;
+    if (picks.some(p => haversineKm(p, c) < minSeparationKm)) continue;
     picks.push(c);
   }
   picks.forEach((p, i) => (p.rank = i + 1));

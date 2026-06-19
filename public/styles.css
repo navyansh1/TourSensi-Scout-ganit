@@ -150,7 +150,9 @@ button .uil,
 .primary.analyzing::after {
   content: ""; position: absolute; left: -50%; top: 0;
   width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(254, 110, 6, 0.9), transparent);
+  /* A bright white sweep reads on every button colour (blue Analyze / blue
+     planner / orange Collateral), unlike the old orange-on-orange shimmer. */
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
   animation: analyze-scan 1.3s ease-in-out infinite;
 }
 @keyframes analyze-scan {
@@ -1186,6 +1188,15 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .rev-medium { background: #fef3c7; color: #b45309; }
 .rev-high { background: #dcfce7; color: #15803d; }
 .share-btn { width: 100%; margin: 8px 0 4px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.loan-actions { display: flex; gap: 8px; margin: 12px 0 4px; }
+.loan-actions button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.fb { margin: 4px 0 6px; }
+.fb-row { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.fb-row:last-child { border-bottom: none; }
+.fb-dot { font-size: 11px; line-height: 1.5; flex: 0 0 auto; }
+.fb-body { flex: 1; }
+.fb-line { font-size: 12.5px; color: var(--text); line-height: 1.4; }
+.fb-note { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .pa-bottom { margin-top: 12px; font-weight: 600; color: var(--ganit-blue);
   background: rgba(26,0,217,0.06); border-radius: 8px; padding: 9px 11px; line-height: 1.5; }
 .pa-comp { border-left: 3px solid var(--border); padding: 5px 0 5px 9px; margin-bottom: 7px; }
