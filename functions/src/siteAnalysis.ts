@@ -131,6 +131,7 @@ Nearby footfall anchors: ${anchorText}
 Use Google Search to: (a) identify the exact neighbourhood/locality, (b) find its growth trajectory & recent development, (c) any upcoming infrastructure (metro, IT parks, highways, malls), (d) the demographic/income profile, and (e) the local COMMERCIAL real-estate cost — typical ₹/sqft rate, monthly rent and buy price for a ~800 sqft unit. Read the competitor reviews above to judge whether local commerce of this type is thriving or struggling, and why.
 
 IMPORTANT: be punchy and scannable. Every bullet must be ONE short line (max ~12 words), concrete, with a number where possible. No long sentences, no fluff.
+CRITICAL — bullets must NOT contain: citations, "[cite: ...]", competitor NAMES, star ratings, review counts, or any quoted review text. The competitor names + reviews are already shown separately in the UI. Bullets state only the INSIGHT (e.g. "Rivals slow on item retrieval — service gap to exploit"), never the evidence dump.
 
 Reply with ONLY JSON, no prose:
 {
@@ -167,7 +168,20 @@ Reply with ONLY JSON, no prose:
     console.error("analyzeSite AI failed:", (e as Error).message);
   }
 
-  const arr = (x: any, n: number) => Array.isArray(x) ? x.map((s: any) => String(s)).slice(0, n) : [];
+  // Strip any citation/review-dump the model may inline despite instructions:
+  // drop "[cite: ...]" blocks, quoted review text, and trailing star/review
+  // counts, then hard-cap length so a bullet is always one scannable line.
+  const cleanBullet = (s: string): string => {
+    let t = String(s);
+    t = t.replace(/\[cite:[\s\S]*?\]/gi, "");          // [cite: ...] blocks
+    t = t.replace(/Reviews?:\s*[\s\S]*$/i, "");         // "Reviews: ..." tail
+    t = t.replace(/[“"][^“”"]{40,}[”"]/g, "");          // long quoted snippets
+    t = t.replace(/★\s*[\d.]+\s*\(\d[\d,]*\s*reviews?\)/gi, ""); // ★4.9 (566 reviews)
+    t = t.replace(/\s{2,}/g, " ").replace(/\s*[·,;]\s*$/, "").trim();
+    return t.slice(0, 140);
+  };
+  const arr = (x: any, n: number) =>
+    Array.isArray(x) ? x.map((s: any) => cleanBullet(s)).filter(Boolean).slice(0, n) : [];
 
   // Revenue → payback. The model gives a ₹ range; we parse a midpoint and apply
   // the vertical's (editable) margin + setup capex, netting out the rent it just
