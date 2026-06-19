@@ -36,7 +36,52 @@ const TAG_LABELS = {
   initMap();
   await loadCompanies();
   bindUI();
+  await maybeLoadSharedResult();
 })();
+
+// If the URL has ?r=<id>, fetch that shared snapshot and re-render it exactly.
+async function maybeLoadSharedResult() {
+  const id = new URLSearchParams(location.search).get("r");
+  if (!id) return;
+  try {
+    setStatus("Loading shared analysis…");
+    const doc = await fetch(`${RUN}/share/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null);
+    if (!doc?.result) { setStatus("Shared link not found or expired.", "error"); return; }
+    lastResult = doc.result;
+    // Reflect the shared inputs into the form so a viewer can fork/re-run.
+    if (doc.result.vertical) { const v = document.getElementById("vertical"); if (v) v.value = doc.result.vertical; }
+    if (doc.result.geo?.formattedAddress) { const l = document.getElementById("location"); if (l) l.value = doc.result.geo.formattedAddress; }
+    renderResult(doc.result);
+    setStatus("📤 Viewing a shared analysis — re-run or tweak to make it yours.");
+  } catch (e) {
+    console.error(e);
+    setStatus("Could not load shared analysis.", "error");
+  }
+}
+
+// Save the current result and copy a shareable link to the clipboard.
+async function shareCurrentResult(btn) {
+  if (!lastResult) return;
+  const original = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '<i class="uil uil-spinner"></i> Sharing…';
+  try {
+    const { id } = await fetch(`${RUN}/share`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result: lastResult }),
+    }).then(r => r.json());
+    if (!id) throw new Error("no id");
+    const url = `${location.origin}${location.pathname}?r=${id}`;
+    try { await navigator.clipboard.writeText(url); } catch { /* clipboard may be blocked */ }
+    history.replaceState(null, "", `?r=${id}`);
+    btn.innerHTML = '<i class="uil uil-check"></i> Link copied!';
+    setStatus(`📤 Share link ready: ${url}`);
+  } catch (e) {
+    console.error(e);
+    btn.innerHTML = '<i class="uil uil-exclamation-triangle"></i> Failed';
+  } finally {
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = original; }, 2500);
+  }
+}
 
 function loadGoogleMaps(key) {
   return new Promise((resolve, reject) => {
@@ -233,6 +278,7 @@ async function loadCompanies() {
 
 function bindUI() {
   document.getElementById("analyzeBtn").onclick = onAnalyze;
+  document.getElementById("shareBtn")?.addEventListener("click", (e) => shareCurrentResult(e.currentTarget));
   document.getElementById("trailToggle").onclick = (e) => {
     const t = document.getElementById("trail");
     t.classList.toggle("hidden");
@@ -2078,6 +2124,32 @@ function renderMarketSnapshot(data) {
       </div>`);
   }
 
+  // Affluence Index — free composite proxy (property ₹/sqft + venue price tier
+  // + night-lights). Deliberately a proxy, not a household-income figure, so we
+  // label it as such and list its components in the sub-line. An optional
+  // grounded income read (district-level) is appended when available.
+  const aff = data.affluence;
+  if (aff && typeof aff.index === "number") {
+    const bandTone = aff.index >= 78 ? "var(--good)"
+      : aff.index >= 60 ? "var(--good)"
+      : aff.index >= 42 ? "inherit"
+      : "var(--warn)";
+    const comps = (aff.components || [])
+      .map(c => `${c.label} ${c.score} (${Math.round(c.weight * 100)}%)`)
+      .join(" · ");
+    const inc = data.income;
+    const incLine = inc && (inc.incomeNote || inc.affluenceSummary)
+      ? `<div class="ms-sub" style="margin-top:4px;color:var(--ganit-orange)">💡 ${escapeHtml(inc.incomeNote || inc.affluenceSummary)}${inc.scope && inc.scope !== "locality" ? ` · ${inc.scope}-level AI estimate` : " · AI estimate"}</div>`
+      : "";
+    cards.push(`
+      <div class="ms-card" title="${escapeHtml(aff.note || "")}">
+        <div class="ms-label">💰 Affluence Index</div>
+        <div class="ms-value" style="color:${bandTone}">${aff.index}<span style="font-size:.55em;opacity:.6">/100</span> <span style="font-size:.5em;opacity:.7">${escapeHtml(aff.band || "")}</span></div>
+        <div class="ms-sub">${escapeHtml(comps)} · proxy</div>
+        ${incLine}
+      </div>`);
+  }
+
   if (pq) {
     if (pq.avgRating != null) {
       cards.push(`
@@ -3047,6 +3119,20 @@ function renderSiteAnalysis(a, accent) {
       ${p.note ? `<div class="pa-prop-note">${escapeHtml(p.note)}</div>` : ""}
     </div>` : "";
 
+  // Revenue + payback — the buyer's language (₹ + months), with the editable
+  // assumptions shown so it reads as a model, not an oracle.
+  const r = a.revenue;
+  const fmtMonths = (m) => m == null ? "—" : (m >= 12 ? `${(m/12).toFixed(1)} yr (${m} mo)` : `${m} mo`);
+  const revHTML = r && r.monthlyRevenueRange ? `
+    <div class="pa-h">📈 Revenue & payback ${r.confidence ? `<span class="rev-conf rev-${r.confidence}">${r.confidence} confidence</span>` : ""}</div>
+    <div class="pa-prop">
+      <div class="pa-prop-row"><span>Est. monthly revenue</span><strong>${escapeHtml(r.monthlyRevenueRange)}</strong></div>
+      ${r.payback?.monthlyProfitINR != null ? `<div class="pa-prop-row"><span>Est. monthly profit</span><strong>₹${Math.round(r.payback.monthlyProfitINR/1000).toLocaleString("en-IN")}k</strong></div>` : ""}
+      <div class="pa-prop-row"><span>Payback period</span><strong>${r.payback?.months != null ? fmtMonths(r.payback.months) : "not viable at these costs"}</strong></div>
+      ${r.payback?.assumptions?.length ? `<div class="pa-prop-note">Assumes: ${r.payback.assumptions.map(escapeHtml).join(" · ")}</div>` : ""}
+      <div class="pa-prop-note">Order-of-magnitude model from grounded estimates — adjust assumptions to your actuals.</div>
+    </div>` : "";
+
   document.getElementById("paWrap").outerHTML = `
     <div class="pa">
       <div class="pa-verdict" style="background:${verdictColor}">${a.verdict}</div>
@@ -3062,6 +3148,7 @@ function renderSiteAnalysis(a, accent) {
       ${a.risks?.length ? `<div class="pa-h">Risks</div><ul class="pa-list pa-risks">${list(a.risks)}</ul>` : ""}
 
       ${propHTML}
+      ${revHTML}
 
       ${a.bottomLine ? `<div class="pa-bottom">${escapeHtml(a.bottomLine)}</div>` : ""}
       ${comps ? `<div class="pa-h">Competitors nearby</div><div class="pa-comps">${comps}</div>` : ""}
@@ -3306,12 +3393,38 @@ function renderLoanAnalysis(a) {
     `<div class="pa-comp"><a class="pa-comp-name gmaps-inline" href="${gmapsUrl(n)}" target="_blank" rel="noopener">${escapeHtml(n.name)} ↗</a>${n.rating != null ? `<span class="pa-comp-meta">★${n.rating} · ${n.reviews ?? 0}${n.status && n.status !== "OPERATIONAL" ? " · " + escapeHtml(n.status.replace(/_/g, " ").toLowerCase()) : ""}</span>` : ""}</div>`).join("");
   const src = (a.sources || []).map(s => `<a href="${s.uri}" target="_blank" rel="noopener">${escapeHtml(s.title || "source")} ↗</a>`).join(" · ");
 
+  // Geographic NPA-risk band — auditable, geographic-only, never a credit score.
+  const npa = a.npaRisk;
+  const npaColor = { LOW: "#16a34a", MODERATE: "#d97706", ELEVATED: "#dc2626" }[npa?.band] || "#d97706";
+  const npaHtml = npa ? `
+    <div class="pa-h">🏦 Geographic NPA-risk read</div>
+    <div class="npa-band">
+      <span class="npa-pill" style="background:${npaColor}">${npa.band}</span>
+      <span class="npa-score">${npa.score}/100 geographic risk</span>
+    </div>
+    <ul class="pa-list">${list(npa.drivers)}</ul>
+    <div class="npa-disc">${escapeHtml(npa.disclaimer)}</div>` : "";
+
+  // Farmer use-case: nearby water bodies + irrigation access (agri/land only).
+  const agri = a.agri;
+  const agriHtml = (agri && (agri.nearestWater || agri.farmedNearby)) ? `
+    <div class="pa-h">🚜 Irrigation & water access</div>
+    <div class="npa-band">
+      <span class="npa-pill" style="background:${agri.waterAccessScore >= 70 ? "#16a34a" : agri.waterAccessScore >= 40 ? "#d97706" : "#dc2626"}">${agri.waterAccessScore}/100</span>
+      <span class="npa-score">water access${agri.farmedNearby ? ` · ${agri.farmlandCount} farmland parcels nearby` : ""}</span>
+    </div>
+    <ul class="pa-list">
+      ${(agri.waters || []).slice(0, 4).map(w => `<li><a class="gmaps-inline" href="${gmapsUrl({ lat: w.lat, lng: w.lng, name: w.name })}" target="_blank" rel="noopener">${escapeHtml(w.name)} ↗</a> — ${escapeHtml(w.kind)}, ${w.distanceM >= 1000 ? (w.distanceM/1000).toFixed(1) + " km" : w.distanceM + " m"}</li>`).join("")}
+    </ul>` : "";
+
   sec.innerHTML = `
     <div class="pa">
       <div class="pa-verdict" style="background:${sigColor}">${a.geographicSignal} (geographic)</div>
       <div class="pa-locality">${escapeHtml(a.locality)}</div>
       <div class="pa-headline">${escapeHtml(a.setting)}${a.valueBand ? ` · approx ${escapeHtml(a.valueBand)}` : ""}</div>
 
+      ${npaHtml}
+      ${agriHtml}
       ${a.waterAndRisk?.length ? `<div class="pa-h">💧 Water & risk</div><ul class="pa-list">${list(a.waterAndRisk)}</ul>` : ""}
       ${a.rainfall ? renderRainfall(a.rainfall) : ""}
       ${a.locationFactors?.length ? `<div class="pa-h">📍 Location</div><ul class="pa-list">${list(a.locationFactors)}</ul>` : ""}

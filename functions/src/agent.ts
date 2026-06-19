@@ -128,6 +128,73 @@ Reply with ONLY JSON, no prose:
   }
 }
 
+// Best-effort grounded INCOME context for an area. Real household-income data
+// (GeoIQ, telco) costs lakhs/yr and is a black box; instead we ASK Google Search
+// per call for whatever income evidence exists. In practice this returns
+// DISTRICT/CITY-level figures (Statista, govt, news) plus a qualitative locality
+// affluence read — NOT precise neighbourhood income. We surface it as a clearly
+// labelled "AI estimate · district-level" supplement to the deterministic
+// Affluence Index, never as a hard number. Returns null when nothing usable is
+// grounded (the common case for tier-3 areas) so we fail open to the free index.
+export interface AiIncomeContext {
+  // Coarse band the AI is willing to commit to, with its evidence.
+  band: "Premium" | "Upper-mid" | "Mid" | "Value" | "Low" | null;
+  // Optional district/city per-capita or household income figure it found,
+  // already as a human string so we never imply false precision.
+  incomeNote: string;        // e.g. "Bengaluru Urban per-capita ≈ ₹3.2L (2016, district-level)"
+  affluenceSummary: string;  // one-line qualitative read of the locality
+  scope: "locality" | "city" | "district" | "unknown"; // honesty about granularity
+  sources: { uri: string; title?: string }[];
+}
+
+export async function aiIncomeContext(area: string, city: string): Promise<AiIncomeContext | null> {
+  const model = vertex().getGenerativeModel({
+    model: "gemini-2.5-flash",
+    tools: [{ googleSearch: {} } as any],
+  });
+  const prompt = `Using Google Search, find evidence of household affluence / income for ${area}, ${city}, India.
+Look for: per-capita or average household income (district or city is fine if locality isn't available), share of high-income households, and qualitative signals (premium housing, luxury retail, IT/corporate presence).
+Be honest about granularity — most localities only have district/city figures. Do NOT invent a neighbourhood income number.
+
+Reply with ONLY JSON, no prose:
+{
+  "band": "Premium|Upper-mid|Mid|Value|Low|null",
+  "incomeNote": "<short factual income figure WITH its scope, e.g. 'Bengaluru Urban per-capita ≈ ₹3.2L (district-level)', or '' if none found>",
+  "affluenceSummary": "<one short sentence reading the locality's affluence from evidence>",
+  "scope": "locality|city|district|unknown"
+}`;
+
+  try {
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const candidate: any = resp.response?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+    const meta = candidate?.groundingMetadata ?? {};
+    const sources: { uri: string; title?: string }[] = [];
+    for (const c of meta.groundingChunks ?? []) {
+      if (c.web?.uri) sources.push({ uri: c.web.uri, title: c.web.title });
+    }
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]);
+    const bands = ["Premium", "Upper-mid", "Mid", "Value", "Low"];
+    const band = bands.includes(parsed.band) ? parsed.band : null;
+    const incomeNote = String(parsed.incomeNote || "").slice(0, 200);
+    const affluenceSummary = String(parsed.affluenceSummary || "").slice(0, 240);
+    // Nothing usable — fail open to the deterministic index.
+    if (!band && !incomeNote && !affluenceSummary) return null;
+    const scopes = ["locality", "city", "district", "unknown"];
+    return {
+      band,
+      incomeNote,
+      affluenceSummary,
+      scope: scopes.includes(parsed.scope) ? parsed.scope : "unknown",
+      sources: sources.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
+}
+
 // On-demand grounded revenue/footfall estimate for ONE site (used by the
 // Expansion Planner when the user clicks a specific existing site or gap). Kept
 // out of the batch path on purpose — one Gemini call per click, not per site.
@@ -138,6 +205,27 @@ export interface AiSiteRevenue {
   assumptions: string[];         // the concrete assumptions the number rests on
   confidence: "low" | "medium" | "high";
   sources: { uri: string; title?: string }[];
+  monthlyRevenueMidINR?: number; // parsed midpoint of the range, in ₹ (for payback math)
+}
+
+// Parse a ₹ range string ("₹8–14 lakh / month", "₹1.2–2 crore", "Rs 50,000")
+// into a numeric midpoint in rupees. Returns null if we can't read it. Used to
+// derive payback — kept tolerant because the AI free-texts the range.
+export function parseRupeeRange(s: string): number | null {
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  const mult = lower.includes("crore") || /\bcr\b/.test(lower) ? 1e7
+    : lower.includes("lakh") || lower.includes("lac") ? 1e5
+    : 1;
+  // Strip thousands separators so "50,000" reads as 50000, not 50. Then grab up
+  // to two leading numbers (the low and high of the range).
+  const cleaned = s.replace(/,/g, "");
+  const nums = (cleaned.match(/\d+(?:\.\d+)?/g) || []).map(Number).filter(n => n > 0);
+  if (!nums.length) return null;
+  const lo = nums[0];
+  const hi = nums.length > 1 ? nums[1] : nums[0];
+  const mid = ((lo + hi) / 2) * mult;
+  return mid > 0 ? Math.round(mid) : null;
 }
 
 export async function aiSiteRevenue(opts: {
@@ -194,10 +282,48 @@ Reply with ONLY JSON, no prose:
         : [],
       confidence: ["low", "medium", "high"].includes(parsed.confidence) ? parsed.confidence : "low",
       sources: sources.slice(0, 3),
+      monthlyRevenueMidINR: parseRupeeRange(String(parsed.monthlyRevenueRange)) ?? undefined,
     };
   } catch {
     return null;
   }
+}
+
+// Payback (months) from a monthly revenue, an operating margin and the one-time
+// setup capex (optionally net of monthly rent). Pure arithmetic on numbers we
+// already have — no API call. Returns null when revenue is unknown/zero.
+export interface PaybackEstimate {
+  months: number | null;
+  monthlyProfitINR: number | null;
+  assumptions: string[];          // editable, human-readable so the buyer can adjust
+}
+
+export function computePayback(opts: {
+  monthlyRevenueINR: number | null;
+  marginPct: number;
+  setupCapex: number;
+  monthlyRentINR?: number | null;  // if known (99acres), subtract from monthly profit
+}): PaybackEstimate {
+  const assumptions: string[] = [
+    `Operating margin ≈ ${Math.round(opts.marginPct * 100)}%`,
+    `One-time setup ≈ ₹${(opts.setupCapex / 1e5).toFixed(1)} lakh`,
+  ];
+  if (opts.monthlyRentINR && opts.monthlyRentINR > 0) {
+    assumptions.push(`Monthly rent ≈ ₹${Math.round(opts.monthlyRentINR / 1000)}k (from listings)`);
+  }
+  if (!opts.monthlyRevenueINR || opts.monthlyRevenueINR <= 0) {
+    return { months: null, monthlyProfitINR: null, assumptions };
+  }
+  const grossProfit = opts.monthlyRevenueINR * opts.marginPct;
+  const monthlyProfit = grossProfit - (opts.monthlyRentINR ?? 0);
+  if (monthlyProfit <= 0) {
+    return { months: null, monthlyProfitINR: Math.round(monthlyProfit), assumptions };
+  }
+  return {
+    months: Math.round(opts.setupCapex / monthlyProfit),
+    monthlyProfitINR: Math.round(monthlyProfit),
+    assumptions,
+  };
 }
 
 // Detailed, grounded "why this exact spot" narrative for an expansion gap.

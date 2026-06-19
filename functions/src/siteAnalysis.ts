@@ -14,7 +14,8 @@
 import { VertexAI } from "@google-cloud/vertexai";
 import { richPlacesNearby, type RichPlace } from "./places";
 import { fetchContextPois, hexContext } from "./context";
-import { VERTICAL_PLACES_TYPE, type Vertical } from "./companies";
+import { VERTICAL_PLACES_TYPE, VERTICAL_ECONOMICS, type Vertical } from "./companies";
+import { parseRupeeRange, computePayback, type PaybackEstimate } from "./agent";
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "toursensi-ganit-71c77";
 
@@ -49,6 +50,12 @@ export interface SiteAnalysis {
     monthlyRent?: string;         // e.g. "₹1.2–1.8 lakh/month for ~800 sqft"
     buyPrice?: string;            // e.g. "₹1.4–1.8 cr for ~800 sqft"
     note?: string;
+  };
+  revenue?: {                     // grounded ₹ revenue + derived payback
+    monthlyRevenueRange?: string; // e.g. "₹8–14 lakh / month"
+    confidence?: "low" | "medium" | "high";
+    payback?: PaybackEstimate;    // months to recover setup capex (editable assumptions)
+    economics?: { marginPct: number; setupCapex: number; label: string };
   };
   evidence: {                     // the raw Places metadata we surfaced
     competitors: { name: string; id?: string; lat?: number; lng?: number; rating?: number; reviews?: number; status?: string; sample?: string }[];
@@ -140,6 +147,8 @@ Reply with ONLY JSON, no prose:
     "buyPrice": "<e.g. '₹1.4–1.8 cr for ~800 sqft'>",
     "note": "<optional one-line caveat>"
   },
+  "monthlyRevenueRange": "<realistic ₹ range this outlet would earn per month, e.g. '₹8–14 lakh / month', built bottom-up (footfall × ticket, or transactions × fee)>",
+  "revenueConfidence": "low|medium|high",
   "bottomLine": "<decisive 1 line>"
 }`;
 
@@ -159,6 +168,30 @@ Reply with ONLY JSON, no prose:
   }
 
   const arr = (x: any, n: number) => Array.isArray(x) ? x.map((s: any) => String(s)).slice(0, n) : [];
+
+  // Revenue → payback. The model gives a ₹ range; we parse a midpoint and apply
+  // the vertical's (editable) margin + setup capex, netting out the rent it just
+  // estimated. Pure arithmetic — no extra AI call. Shows the buyer ₹ + months,
+  // not just a score.
+  const revRange = parsed.monthlyRevenueRange ? String(parsed.monthlyRevenueRange).slice(0, 60) : undefined;
+  const econ = VERTICAL_ECONOMICS[input.vertical];
+  let revenue: SiteAnalysis["revenue"];
+  if (revRange) {
+    const monthlyRevMid = parseRupeeRange(revRange);
+    const monthlyRent = parseRupeeRange(String(parsed.propertyCost?.monthlyRent ?? ""));
+    revenue = {
+      monthlyRevenueRange: revRange,
+      confidence: ["low", "medium", "high"].includes(parsed.revenueConfidence) ? parsed.revenueConfidence : "low",
+      payback: computePayback({
+        monthlyRevenueINR: monthlyRevMid,
+        marginPct: econ.marginPct,
+        setupCapex: econ.setupCapex,
+        monthlyRentINR: monthlyRent,
+      }),
+      economics: { marginPct: econ.marginPct, setupCapex: econ.setupCapex, label: econ.label },
+    };
+  }
+
   return {
     locality: String(parsed.locality || "this locality"),
     verdict: ["OPEN", "CONSIDER", "AVOID"].includes(parsed.verdict) ? parsed.verdict : "CONSIDER",
@@ -174,6 +207,7 @@ Reply with ONLY JSON, no prose:
       buyPrice: parsed.propertyCost.buyPrice ? String(parsed.propertyCost.buyPrice).slice(0, 60) : undefined,
       note: parsed.propertyCost.note ? String(parsed.propertyCost.note).slice(0, 140) : undefined,
     } : {},
+    revenue,
     evidence: {
       competitors: competitors.slice(0, 6).map(c => ({
         name: c.name, id: c.id, lat: c.lat, lng: c.lng,

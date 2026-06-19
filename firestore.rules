@@ -5,6 +5,9 @@ service cloud.firestore {
     match /hex_scores/{doc}    { allow read: if true; allow write: if false; }
     match /poi_cache/{doc}     { allow read: if true; allow write: if false; }
     match /realestate/{doc}    { allow read: if true; allow write: if false; }
+    // Shared analysis snapshots — public read so a share link opens for anyone;
+    // writes happen server-side via the Admin SDK (rules don't apply there).
+    match /shared_results/{doc} { allow read: if true; allow write: if false; }
 
     // Per-user data
     match /users/{uid}/{document=**} {

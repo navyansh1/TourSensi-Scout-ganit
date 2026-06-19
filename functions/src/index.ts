@@ -14,13 +14,14 @@ import express from "express";
 import cors from "cors";
 
 import { geocodeIndia } from "./geocode";
-import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, VERTICAL_WEIGHTS, type Vertical } from "./companies";
+import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, VERTICAL_WEIGHTS, VERTICAL_ECONOMICS, type Vertical } from "./companies";
 import { competitorsInArea, brandLocationsInArea } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
 import { bboxNightlights, trendToGrowthNudge } from "./nightlights";
-import { runGrowthAgent, aiPropertyEstimate, aiSiteRevenue } from "./agent";
+import { runGrowthAgent, aiPropertyEstimate, aiSiteRevenue, aiIncomeContext, computePayback } from "./agent";
+import { computeAffluence } from "./affluence";
 import { planExpansion } from "./portfolio";
 import { analyzeSite, type SiteAnalysisInput } from "./siteAnalysis";
 import { analyzeLoanCollateral, type LoanAnalysisInput, type CollateralType } from "./loanAnalysis";
@@ -113,7 +114,8 @@ router.post("/analyze-stream", async (req, res) => {
     send("progress", { step: "overlay", label: `🗺️ ${contextPois.length} nearby context POIs mapped`, done: true });
     const contextBrief = areaContextBrief(vertical, contextPois, { lat: geo.lat, lng: geo.lng });
 
-    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, population, nightlights, agent] = await Promise.allSettled([
+    send("progress", { step: "income", label: "💰 Reading area affluence signals…" });
+    const [competitors, ownBrand, osmBackdrop, wiki, pinData, realEstate, population, nightlights, income, agent] = await Promise.allSettled([
       competitorsInArea({ category: placeType, centerLat: geo.lat, centerLng: geo.lng, radiusM: 4000 })
         .then(r => { send("progress", { step: "competitors", label: `🔴 ${r.length} competitor POIs found`, done: true }); return r; }),
       (company
@@ -135,6 +137,11 @@ router.post("/analyze-stream", async (req, res) => {
       bboxNightlights(geo.bbox)
         .then(r => { if (r) send("progress", { step: "nightlights", label: `🛰️ Nightlights vitality ${r.vitality}/100${r.trendDelta != null ? ` · ${r.trendDelta >= 0 ? "+" : ""}${r.trendDelta} 3-yr trend` : ""}`, done: true }); return r; })
         .catch(() => null),
+      // Best-effort grounded income context (district/city-level), cached 14d.
+      // Fails open to the deterministic Affluence Index below.
+      cachedIncomeContext(geo.area, geo.city)
+        .then(r => { send("progress", { step: "income", label: r ? `💰 Affluence read${r.band ? ` · ${r.band}` : ""}` : "💰 Affluence from local signals", done: true }); return r; })
+        .catch(() => null),
       cachedGrowthAgent(geo.area, geo.city, contextBrief)
         .then(r => { send("progress", { step: "agent", label: `🤖 Growth ${r.growthScore}/100 · ${r.trail.length} searches · 4 quadrants`, done: true }); return r; }),
     ]);
@@ -149,6 +156,7 @@ router.post("/analyze-stream", async (req, res) => {
     reSignals = await withAiPropertyFallback(reSignals, geo.area, geo.city);
     const popData = population.status === "fulfilled" ? population.value : null;
     const nightData = nightlights.status === "fulfilled" ? nightlights.value : null;
+    const incomeData = income.status === "fulfilled" ? income.value : null;
     const fallbackAgent = {
       area: geo.area, city: geo.city, growthScore: 50,
       reasoning: "(agent unavailable)", trail: [] as any[],
@@ -215,6 +223,15 @@ router.post("/analyze-stream", async (req, res) => {
       hexes,
     });
 
+    // Deterministic Affluence Index — free composite of property ₹/sqft +
+    // venue price tier + satellite night-lights. Always computed; the grounded
+    // income context above is an optional, clearly-scoped supplement.
+    const affluence = computeAffluence({
+      realEstate: reSignals,
+      competitors: competitorsList,
+      nightlights: nightData,
+    });
+
     const trailId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await admin.firestore().collection("agent_trails").doc(trailId).set({
       area: agentResult.area, city: agentResult.city,
@@ -232,6 +249,8 @@ router.post("/analyze-stream", async (req, res) => {
       pin: pinInfoData,
       population: popData,
       nightlights: nightData,
+      affluence,
+      income: incomeData,
       agent: {
         trailId,
         growthScore: agentResult.growthScore,
@@ -498,9 +517,12 @@ router.post("/loan-analysis", async (req, res) => {
 // Body: { vertical, lat, lng, area?, competitorCount, footfallIndex }
 router.post("/site-revenue", async (req, res) => {
   try {
-    const { vertical, lat, lng, area, competitorCount, footfallIndex } = req.body as {
+    const { vertical, lat, lng, area, competitorCount, footfallIndex, monthlyRentINR, marginPct, setupCapex } = req.body as {
       vertical: Vertical; lat: number; lng: number; area?: string;
       competitorCount?: number; footfallIndex?: number;
+      monthlyRentINR?: number;   // optional override (else derived/omitted)
+      marginPct?: number;        // optional override of the default economics
+      setupCapex?: number;       // optional override of the default economics
     };
     if (!vertical || typeof lat !== "number" || typeof lng !== "number") {
       res.status(400).json({ error: "vertical, lat and lng are required" });
@@ -513,7 +535,24 @@ router.post("/site-revenue", async (req, res) => {
       footfallIndex: footfallIndex ?? 50,
     }));
     if (!est) { res.json({ available: false }); return; }
-    res.json({ available: true, ...est });
+    // Derive payback from the revenue midpoint + (editable) vertical economics.
+    // Margin/capex are overridable per request so the UI can recompute when the
+    // user edits the assumptions — no re-call to the AI.
+    const econ = VERTICAL_ECONOMICS[vertical];
+    const payback = computePayback({
+      monthlyRevenueINR: est.monthlyRevenueMidINR ?? null,
+      marginPct: typeof marginPct === "number" ? marginPct : econ.marginPct,
+      setupCapex: typeof setupCapex === "number" ? setupCapex : econ.setupCapex,
+      monthlyRentINR: typeof monthlyRentINR === "number" ? monthlyRentINR : null,
+    });
+    res.json({
+      available: true, ...est, payback,
+      economics: {
+        marginPct: typeof marginPct === "number" ? marginPct : econ.marginPct,
+        setupCapex: typeof setupCapex === "number" ? setupCapex : econ.setupCapex,
+        label: econ.label,
+      },
+    });
   } catch (e) {
     console.error("site-revenue failed:", e);
     res.status(500).json({ error: String((e as Error).message) });
@@ -567,8 +606,41 @@ function cachedGrowthAgent(area: string, city: string, contextBrief: string) {
     () => runGrowthAgent({ area, city, contextBrief }));
 }
 
+// Best-effort grounded income context, cached 14 days per locality (income data
+// moves slowly and a grounded prompt is the only billed cost here, so cache hard).
+function cachedIncomeContext(area: string, city: string) {
+  return withCache("income_context", `${area}__${city}`.toLowerCase(), 14 * 864e5,
+    () => aiIncomeContext(area, city));
+}
+
 router.get("/agent-trail/:id", async (req, res) => {
   const snap = await admin.firestore().collection("agent_trails").doc(req.params.id).get();
+  if (!snap.exists) { res.status(404).json({ error: "not found" }); return; }
+  res.json(snap.data());
+});
+
+// Share a result snapshot. Stores the full result blob the frontend already
+// holds (lastResult) and returns a short id; the link "/?r=<id>" re-renders the
+// exact same UI for anyone. Read-only snapshot — the viewer can fork it locally
+// (re-analyse / tweak weights client-side) but doesn't mutate the original.
+router.post("/share", async (req, res) => {
+  try {
+    const result = req.body?.result;
+    if (!result || typeof result !== "object") { res.status(400).json({ error: "result is required" }); return; }
+    const id = Math.random().toString(36).slice(2, 10);
+    await admin.firestore().collection("shared_results").doc(id).set({
+      result, createdAt: Date.now(),
+    });
+    res.json({ id });
+  } catch (e) {
+    console.error("share save failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
+router.get("/share/:id", async (req, res) => {
+  const id = String(req.params.id).replace(/[^a-z0-9]/gi, "").slice(0, 16);
+  const snap = await admin.firestore().collection("shared_results").doc(id).get();
   if (!snap.exists) { res.status(404).json({ error: "not found" }); return; }
   res.json(snap.data());
 });

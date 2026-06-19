@@ -65,3 +65,27 @@ export const VERTICAL_WEIGHTS: Record<Vertical, { demand: number; saturation: nu
   FMCG_RETAIL:    { demand: 0.45, saturation: 0.25, access: 0.15, growth: 0.15 },
   FMCG_WAREHOUSE: { demand: 0.25, saturation: 0.10, access: 0.40, growth: 0.25 },
 };
+
+// Default economics per vertical, used to turn a grounded MONTHLY revenue estimate
+// into a payback-period figure. These are EDITABLE DEFAULTS (the UI lets the user
+// override them) and deliberately conservative round numbers — a starting model,
+// not a forecast. Sources: typical Indian unit economics (operating margin %,
+// one-time fit-out/setup capex, monthly rent already comes from 99acres scrape).
+//   marginPct  → operating margin on revenue that services payback
+//   setupCapex → one-time fit-out / equipment / deposit (₹)
+export interface VerticalEconomics {
+  marginPct: number;       // 0..1 operating margin
+  setupCapex: number;      // one-time ₹ to open the site
+  label: string;           // what the site is, for UI copy
+}
+
+export const VERTICAL_ECONOMICS: Record<Vertical, VerticalEconomics> = {
+  // ATM: thin margin on interchange, low fit-out (machine + cabin + deposit).
+  BFSI_ATM:       { marginPct: 0.30, setupCapex: 1_500_000, label: "ATM" },
+  // Branch: higher fixed cost, staff, larger fit-out.
+  BFSI_BRANCH:    { marginPct: 0.25, setupCapex: 6_000_000, label: "branch" },
+  // Grocery/retail: low margin, moderate fit-out + inventory.
+  FMCG_RETAIL:    { marginPct: 0.12, setupCapex: 4_000_000, label: "store" },
+  // Dark store / warehouse: low margin, racking + cold chain + deposit.
+  FMCG_WAREHOUSE: { marginPct: 0.10, setupCapex: 5_000_000, label: "dark store" },
+};

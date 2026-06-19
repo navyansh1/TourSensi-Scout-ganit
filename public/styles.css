@@ -1177,6 +1177,15 @@ section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px;
 .pa-list li { margin-bottom: 3px; }
 .pa-risks li { color: #b45309; }
 .pa-text { color: var(--text); }
+.npa-band { display: flex; align-items: center; gap: 9px; margin: 2px 0 7px; }
+.npa-pill { color: #fff; font-weight: 800; font-size: 11px; padding: 3px 10px; border-radius: 16px; letter-spacing: .03em; }
+.npa-score { font-size: 12px; font-weight: 600; color: var(--text); }
+.npa-disc { font-size: 10px; color: #6b7280; margin: 4px 0 2px; line-height: 1.45; font-style: italic; }
+.rev-conf { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 10px; margin-left: 6px; text-transform: uppercase; letter-spacing: .03em; }
+.rev-low { background: #fee2e2; color: #b91c1c; }
+.rev-medium { background: #fef3c7; color: #b45309; }
+.rev-high { background: #dcfce7; color: #15803d; }
+.share-btn { width: 100%; margin: 8px 0 4px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .pa-bottom { margin-top: 12px; font-weight: 600; color: var(--ganit-blue);
   background: rgba(26,0,217,0.06); border-radius: 8px; padding: 9px 11px; line-height: 1.5; }
 .pa-comp { border-left: 3px solid var(--border); padding: 5px 0 5px 9px; margin-bottom: 7px; }

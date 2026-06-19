@@ -14,6 +14,7 @@ import { VertexAI } from "@google-cloud/vertexai";
 import { richPlacesNearby, type RichPlace } from "./places";
 import { waterAt, floodNarrative } from "./flood";
 import { getRainfall } from "./rainfall";
+import { agriContext, type AgriContext } from "./agriContext";
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "toursensi-ganit-71c77";
 function vertex() { return new VertexAI({ project: PROJECT_ID, location: "us-central1" }); }
@@ -27,10 +28,23 @@ export interface LoanAnalysisInput {
   address?: string;
 }
 
+// Geographic contribution to default/NPA risk. EXPLICITLY not a credit score —
+// it reads ONLY the geography (flood, drought, dying high street, water access),
+// the part a bank can't get from CIBIL. Framed as "one input" so it's
+// regulator-safe and stays in the tool's lane.
+export interface NpaRiskBand {
+  band: "LOW" | "MODERATE" | "ELEVATED";
+  score: number;                   // 0..100 geographic risk contribution (higher = riskier)
+  drivers: string[];               // the geographic factors that moved the band
+  disclaimer: string;              // always shown — geographic only, not a credit decision
+}
+
 export interface LoanAnalysis {
   locality: string;
   setting: string;                 // "urban" | "semi-urban" | "rural" + one line
   geographicSignal: "FAVOURABLE" | "MIXED" | "UNFAVOURABLE"; // geographic read only
+  npaRisk?: NpaRiskBand;           // geographic contribution to default risk
+  agri?: AgriContext;              // farmer use-case: nearby water + farmland (agri/land only)
   valueBand?: string;              // rough property value, e.g. "₹6,000–8,000/sqft"
   locationFactors: string[];       // short bullets — access, water, surroundings
   commercialHealth: string[];      // short bullets — ratings, reviews, closures
@@ -61,6 +75,59 @@ function summarise(places: RichPlace[]): string {
   }).join("\n");
 }
 
+// Compose a geographic NPA-risk band from signals we already have. Higher score
+// = more geographic risk to repayment. Each driver adds points with a reason, so
+// the band is fully auditable (no black box). Bands: LOW <30, MODERATE <55, else
+// ELEVATED.
+function computeNpaRisk(opts: {
+  collateralType: CollateralType;
+  flood: { level: "HIGH" | "MODERATE" | "LOW" } | null;
+  rainfall: { band: "abundant" | "adequate" | "marginal" | "arid" } | null;
+  closedShare: number;
+  agri: AgriContext | null;
+}): NpaRiskBand {
+  let score = 0;
+  const drivers: string[] = [];
+  const isLand = opts.collateralType === "agricultural" || opts.collateralType === "land";
+
+  // Flood exposure on the collateral itself hits realisable value hardest.
+  if (opts.flood?.level === "HIGH") { score += 35; drivers.push("High flood exposure on the parcel (satellite-confirmed)"); }
+  else if (opts.flood?.level === "MODERATE") { score += 18; drivers.push("Moderate flood exposure nearby"); }
+
+  // Dying high street → weak local economy → weaker repayment environment.
+  const closedPct = Math.round(opts.closedShare * 100);
+  if (closedPct >= 25) { score += 25; drivers.push(`${closedPct}% of nearby businesses permanently shut — declining locality`); }
+  else if (closedPct >= 12) { score += 12; drivers.push(`${closedPct}% nearby businesses shut — some local stress`); }
+
+  // For agricultural collateral, repayment tracks water + rainfall directly.
+  if (opts.collateralType === "agricultural") {
+    if (opts.rainfall?.band === "arid") { score += 22; drivers.push("Arid rainfall — crop yield (hence repayment) at risk without irrigation"); }
+    else if (opts.rainfall?.band === "marginal") { score += 12; drivers.push("Marginal rainfall — drought-prone, irrigation-dependent"); }
+
+    const wa = opts.agri?.waterAccessScore ?? 0;
+    if (!opts.agri?.nearestWater) { score += 18; drivers.push("No mapped irrigation water nearby — borewell-dependent productivity"); }
+    else if (wa < 40) { score += 10; drivers.push(`Limited irrigation access (nearest water ~${((opts.agri!.nearestWater!.distanceM)/1000).toFixed(1)} km)`); }
+    else { drivers.push(opts.agri!.note); } // good water access — record it as a mitigant, no points
+  }
+
+  // Vacant land with neither flood nor activity context is illiquid collateral.
+  if (opts.collateralType === "land" && !opts.flood && (opts.agri?.farmedNearby === false)) {
+    score += 8; drivers.push("Isolated vacant land — thinner resale market");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  const band: NpaRiskBand["band"] = score < 30 ? "LOW" : score < 55 ? "MODERATE" : "ELEVATED";
+  if (!drivers.length) drivers.push("No adverse geographic signals detected");
+
+  return {
+    band, score, drivers: drivers.slice(0, 5),
+    disclaimer:
+      "Geographic risk contribution ONLY — derived from flood, " +
+      (isLand ? "rainfall, water access, " : "") +
+      "and local-economy signals. NOT a credit score; combine with CIBIL, income and title checks.",
+  };
+}
+
 export async function analyzeLoanCollateral(input: LoanAnalysisInput): Promise<LoanAnalysis> {
   // Pull nearby businesses (with review text + open/closed) to read commercial
   // health and the "how many shut down" signal. Useful for all types as a
@@ -83,10 +150,12 @@ export async function analyzeLoanCollateral(input: LoanAnalysisInput): Promise<L
   // (JRC Global Surface Water, 30-yr occurrence). This is ground-truth — it
   // doesn't depend on anyone having mapped the river in OSM.
   const isLandLike = input.collateralType === "agricultural" || input.collateralType === "land";
-  const [water, rainfall] = await Promise.all([
+  const [water, rainfall, agri] = await Promise.all([
     waterAt(input.lat, input.lng, 14).catch(() => null),
     // Rainfall only matters for land/agri repayment capacity — skip for built property.
     isLandLike ? getRainfall(input.lat, input.lng).catch(() => null) : Promise.resolve(null),
+    // Nearby water bodies + farmland for the farmer-loan use case. Land/agri only.
+    isLandLike ? agriContext(input.lat, input.lng, 5000).catch(() => null) : Promise.resolve(null),
   ]);
   const flood = water ? floodNarrative(water) : null;
   const floodFact = flood
@@ -94,6 +163,12 @@ export async function analyzeLoanCollateral(input: LoanAnalysisInput): Promise<L
     : "";
   const rainFact = rainfall
     ? `HISTORICAL RAINFALL (ERA5, last 3 yrs, authoritative): ~${rainfall.avgAnnualMm} mm/yr over ~${rainfall.avgRainyDays} rainy days — ${rainfall.band}. ${rainfall.note} For agricultural collateral, consistent rainfall supports crop yield and the borrower's repayment capacity.`
+    : "";
+  // Nearby water bodies + farmland (OSM, verified working for water features).
+  // This is the IRRIGATION-ACCESS read (water nearby = good), distinct from the
+  // flood read above (water ON the parcel = bad).
+  const agriFact = agri && (agri.nearestWater || agri.farmedNearby)
+    ? `IRRIGATION / WATER ACCESS (OpenStreetMap, nearby): ${agri.note} Water-access score ${agri.waterAccessScore}/100.`
     : "";
 
   const typeLabel: Record<CollateralType, string> = {
@@ -119,6 +194,7 @@ ${nearbyText}
 About ${Math.round(closedShare * 100)}% of nearby businesses with a known status are permanently closed.
 ${floodFact}
 ${rainFact}
+${agriFact}
 
 Use Google Search to identify the exact locality and whether it is urban/semi-urban/rural, the surroundings & connectivity, a rough property value band, and ${waterEmphasis}
 
@@ -154,12 +230,27 @@ Be PUNCHY: every bullet ONE short line (≤ 12 words), concrete, number where po
   // Lead the water/risk section with the satellite-confirmed flood fact (it's
   // ground-truth, so it outranks the AI's web-sourced guesses), then the AI's.
   const waterAndRisk = arr(parsed.waterAndRisk, 4);
+  // Irrigation-access read (water nearby = good) for agri/land, ahead of the
+  // AI's web bullets but after the authoritative satellite/rainfall facts.
+  if (agri && (agri.nearestWater || agri.farmedNearby)) waterAndRisk.unshift(`🚜 ${agri.note}`);
   if (rainfall) waterAndRisk.unshift(`🌧️ ${rainfall.note}`);
   if (flood) waterAndRisk.unshift(`🛰️ ${flood.level} flood signal — ${flood.note}`);
+
+  // Geographic NPA-risk band, composed deterministically from the signals above.
+  const npaRisk = computeNpaRisk({
+    collateralType: input.collateralType,
+    flood: flood ? { level: flood.level } : null,
+    rainfall: rainfall ? { band: rainfall.band } : null,
+    closedShare,
+    agri,
+  });
+
   return {
     locality: String(parsed.locality || "this locality"),
     setting: String(parsed.setting || ""),
     geographicSignal: ["FAVOURABLE", "MIXED", "UNFAVOURABLE"].includes(parsed.geographicSignal) ? parsed.geographicSignal : "MIXED",
+    npaRisk,
+    agri: agri ?? undefined,
     valueBand: parsed.valueBand ? String(parsed.valueBand).slice(0, 60) : undefined,
     locationFactors: arr(parsed.locationFactors, 5),
     commercialHealth: arr(parsed.commercialHealth, 4),
