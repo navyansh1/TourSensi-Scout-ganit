@@ -204,6 +204,48 @@ function initMap() {
       if (p.geometry?.location) { map.panTo(p.geometry.location); map.setZoom(15); }
     });
   }
+
+  // Lead Radar branch/area input — same Google autocomplete, but BIASED to the
+  // selected RERA state so suggestions favour places in that state.
+  const radarInput = document.getElementById("radarLocation");
+  if (radarInput) {
+    radarAutocomplete = new google.maps.places.Autocomplete(radarInput, {
+      componentRestrictions: { country: "in" },
+      fields: ["formatted_address", "geometry", "name"],
+    });
+    radarAutocomplete.addListener("place_changed", () => {
+      const p = radarAutocomplete.getPlace();
+      if (p.geometry?.location) { map.panTo(p.geometry.location); map.setZoom(14); }
+    });
+    // Apply the initial state bias once the dropdown is populated.
+    biasRadarAutocompleteToState();
+  }
+}
+
+// Rough bounding boxes per RERA state, used to bias Lead Radar place suggestions
+// toward the selected state (Google Autocomplete favours results inside bounds).
+const STATE_BOUNDS = {
+  TN: { south: 8.0, west: 76.2, north: 13.6, east: 80.4 },   // Tamil Nadu
+  KA: { south: 11.5, west: 74.0, north: 18.5, east: 78.6 },  // Karnataka
+  MH: { south: 15.6, west: 72.6, north: 22.0, east: 80.9 },  // Maharashtra
+  RJ: { south: 23.0, west: 69.5, north: 30.2, east: 78.3 },  // Rajasthan
+  HR: { south: 27.6, west: 74.4, north: 30.9, east: 77.6 },  // Haryana
+};
+
+let radarAutocomplete = null;
+function biasRadarAutocompleteToState() {
+  if (!radarAutocomplete) return;
+  const stateSel = document.getElementById("radarState");
+  const code = stateSel ? stateSel.value : null;
+  const b = code && STATE_BOUNDS[code];
+  if (!b) return;
+  const bounds = new google.maps.LatLngBounds(
+    { lat: b.south, lng: b.west },
+    { lat: b.north, lng: b.east },
+  );
+  radarAutocomplete.setBounds(bounds);
+  // strictBounds keeps suggestions inside the state (cleaner for a state-scoped tool)
+  radarAutocomplete.setOptions({ strictBounds: false }); // soft bias, not hard cutoff
 }
 
 // Custom top-bar controls that drive the map directly (mimic Google's own
@@ -369,6 +411,8 @@ function bindUI() {
   setupModeToggle();
   setupPlanner();
   setupLoan();
+  setupLeadRadar();
+  setupModeVisibility();
   const execBtn = document.getElementById("execBtn");
   if (execBtn) execBtn.onclick = openExecModal;
   document.getElementById("execClose").onclick = () => document.getElementById("execModal").classList.add("hidden");
@@ -2791,6 +2835,7 @@ function setupModeToggle() {
           finder: document.getElementById("finderMode"),
           planner: document.getElementById("plannerMode"),
           loan: document.getElementById("loanMode"),
+          radar: document.getElementById("radarMode"),
         };
         for (const [key, el] of Object.entries(panels)) {
           if (!el) continue;
@@ -2808,6 +2853,7 @@ function setupModeToggle() {
         if (mode === "finder") clearPlannerMap();
         else clearFinderMapForPlanner();
         if (mode !== "planner") clearPlannerMap();
+        if (mode !== "radar") clearRadarMap();
       };
 
       // Warn before discarding work: a completed Site Finder analysis, an
@@ -3309,6 +3355,284 @@ function drawPlannerMarkers(data, lookups = {}) {
 let loanMarker = null;
 let loanPinMode = false;       // map-click drops the collateral pin
 let loanPinned = null;         // { lat, lng } chosen via pin
+// ===== MODE VISIBILITY (Settings → show/hide modes, persisted) ============
+// Lets you pick which modes appear in the top toggle. Saved to localStorage so
+// the choice survives a reload / reopening the link — handy for demos.
+const MODE_VIS_KEY = "scoutVisibleModes";
+
+function getVisibleModes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MODE_VIS_KEY) || "null");
+    if (saved && typeof saved === "object") return saved;
+  } catch {}
+  return { finder: true, planner: true, loan: true, radar: true };
+}
+
+function applyModeVisibility(vis) {
+  document.querySelectorAll("#modeToggle .mode-btn").forEach((btn) => {
+    const show = vis[btn.dataset.mode] !== false;
+    btn.classList.toggle("hidden", !show);
+  });
+  // If the currently active mode was just hidden, switch to the first visible one.
+  const active = document.querySelector("#modeToggle .mode-btn.active");
+  if (active && vis[active.dataset.mode] === false) {
+    const firstVisible = document.querySelector("#modeToggle .mode-btn:not(.hidden)");
+    if (firstVisible) firstVisible.click();
+  }
+  // Re-position the sliding pill under the active (still-visible) button.
+  const stillActive = document.querySelector("#modeToggle .mode-btn.active:not(.hidden)")
+    || document.querySelector("#modeToggle .mode-btn:not(.hidden)");
+  if (stillActive) {
+    const slider = document.getElementById("modeSlider");
+    if (slider) {
+      slider.style.width = `${stillActive.offsetWidth}px`;
+      slider.style.transform = `translateX(${stillActive.offsetLeft}px)`;
+    }
+  }
+}
+
+function setupModeVisibility() {
+  const vis = getVisibleModes();
+  // Reflect saved state in the checkboxes.
+  document.querySelectorAll("#modeVisibility input[type=checkbox]").forEach((cb) => {
+    cb.checked = vis[cb.dataset.mode] !== false;
+    cb.onchange = () => {
+      const v = getVisibleModes();
+      v[cb.dataset.mode] = cb.checked;
+      // Guard: never hide the last visible mode.
+      const anyVisible = Object.values(v).some(Boolean);
+      if (!anyVisible) { cb.checked = true; v[cb.dataset.mode] = true; return; }
+      localStorage.setItem(MODE_VIS_KEY, JSON.stringify(v));
+      applyModeVisibility(v);
+    };
+  });
+  applyModeVisibility(vis);
+}
+
+// ===== LEAD RADAR =================================================
+// Daily feed of newly RERA-registered buildings near a branch, each with an
+// estimated home-loan opportunity (units × ₹/sqft × LTV × loan penetration).
+let radarMarkers = [];
+
+function setupLeadRadar() {
+  const stateSel = document.getElementById("radarState");
+  const radius = document.getElementById("radarRadius");
+  const radiusVal = document.getElementById("radarRadiusVal");
+  const runBtn = document.getElementById("radarRunBtn");
+
+  // Populate the state dropdown from the backend (so it tracks states we support).
+  if (stateSel) {
+    fetch(`${RUN}/lead-radar/states`).then(r => r.json()).then(({ states }) => {
+      stateSel.innerHTML = Object.entries(states || { TN: "Tamil Nadu" })
+        .map(([code, name]) => `<option value="${code}">${escapeHtml(name)}</option>`)
+        .join("");
+      biasRadarAutocompleteToState(); // bias to the first state once populated
+    }).catch(() => {
+      stateSel.innerHTML = `<option value="TN">Tamil Nadu</option>`;
+    });
+    // Re-bias the place suggestions whenever the state changes.
+    stateSel.addEventListener("change", biasRadarAutocompleteToState);
+  }
+  if (radius && radiusVal) {
+    radius.oninput = () => { radiusVal.textContent = radius.value; };
+  }
+  if (runBtn) runBtn.onclick = runLeadRadar;
+}
+
+function clearRadarMap() {
+  radarMarkers.forEach(m => m.setMap(null));
+  radarMarkers = [];
+}
+
+async function runLeadRadar() {
+  const query = document.getElementById("radarLocation").value.trim();
+  const state = document.getElementById("radarState").value;
+  const radiusKm = parseInt(document.getElementById("radarRadius").value, 10);
+  const statusEl = document.getElementById("radarStatus");
+  const runBtn = document.getElementById("radarRunBtn");
+  const resultEl = document.getElementById("radarResult");
+
+  if (!query) { statusEl.className = "status hint"; statusEl.textContent = "Enter a branch or area first."; return; }
+
+  clearRadarMap();
+  resultEl.classList.add("hidden");
+  statusEl.className = "status";
+  statusEl.textContent = "Scanning RERA registrations + property rates…";
+  runBtn.classList.add("analyzing");
+  runBtn.disabled = true;
+
+  try {
+    const resp = await fetch(`${RUN}/lead-radar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, state, radiusKm }),
+    });
+    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || `HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderLeadRadar(data);
+    statusEl.textContent = "";
+  } catch (e) {
+    statusEl.className = "status hint";
+    statusEl.textContent = `Could not load leads: ${e.message}`;
+  } finally {
+    runBtn.classList.remove("analyzing");
+    runBtn.disabled = false;
+  }
+}
+
+let _radarLeads = [];
+
+// Lead detail panel — opens on card/pin click. Answers "what do I do with this
+// lead": the loan opportunity, how many customers/units, the builder, where it is,
+// the official RERA listing, and concrete next actions. Reuses #hexPanel.
+function openLeadDetail(l, data) {
+  if (!l) return;
+  const panel = document.getElementById("hexPanel");
+  panel.classList.remove("hidden");
+
+  // Center + highlight the project on the map.
+  if (l.lat != null && l.lng != null) { map.panTo({ lat: l.lat, lng: l.lng }); map.setZoom(15); }
+
+  const pool = (l.loanPoolLoCr != null && l.loanPoolHiCr != null)
+    ? `₹${l.loanPoolLoCr}–${l.loanPoolHiCr} Cr` : "—";
+  const units = l.units != null ? (l.unitsEstimated ? "~" + l.units : l.units) : "?";
+  // Derived business metrics — make the "so what" obvious for the officer.
+  const customers = l.units != null ? Math.round(l.units * 0.65) : null; // ~65% take a loan
+  const avgTicket = l.avgUnitCr != null ? round1ui(l.avgUnitCr * 0.75) : null; // 75% LTV
+  const priceTag = l.priceSource === "ai" ? "AI estimate"
+    : l.priceSource === "magicbricks" ? "MagicBricks" : "n/a";
+  const mapsUrl = (l.lat != null) ? `https://www.google.com/maps/search/?api=1&query=${l.lat},${l.lng}` : null;
+  const builderSearch = `https://www.google.com/search?q=${encodeURIComponent((l.promoter || l.projectName) + " builder contact " + (l.locality || ""))}`;
+
+  document.querySelector("#hexPanel h3").textContent = l.projectName;
+
+  const body = document.getElementById("hexBody");
+  const html = `
+    <div class="lead-detail">
+      <div class="lead-hero">
+        <div class="lead-hero-num">${pool}</div>
+        <div class="lead-hero-lbl">estimated home-loan opportunity</div>
+      </div>
+
+      <div class="lead-grid">
+        <div class="lead-stat"><span>${units}</span>units in project</div>
+        <div class="lead-stat"><span>${customers ?? "?"}</span>likely loan customers</div>
+        <div class="lead-stat"><span>${avgTicket != null ? "₹" + avgTicket + " Cr" : "—"}</span>avg loan ticket</div>
+        <div class="lead-stat"><span>${l.distanceKm ?? "?"} km</span>from your branch</div>
+      </div>
+
+      <div class="lead-sec">
+        <div class="lead-sec-h">🏗️ Project</div>
+        <div><strong>${escapeHtml(l.promoter || "Promoter n/a")}</strong></div>
+        <div class="lead-dim">${escapeHtml(l.locality || "")}${l.completion ? " · completion " + escapeHtml(l.completion) : ""}</div>
+        <div class="lead-dim">RERA: ${escapeHtml(l.regNo || "—")}</div>
+      </div>
+
+      <div class="lead-sec">
+        <div class="lead-sec-h">💰 How the ₹ is built</div>
+        <div class="lead-dim">${escapeHtml(l.assumptions)}</div>
+        <div class="lead-dim">₹/sqft source: ${priceTag}</div>
+      </div>
+
+      <div class="lead-sec">
+        <div class="lead-sec-h">🎯 The opportunity (beyond home loans)</div>
+        <div class="lead-dim">${units} new affluent households arriving — a captive cluster for your full product suite:</div>
+        <ul class="lead-actions">
+          <li>🏠 <strong>Home loans</strong> — ${pool} pipeline (the headline).</li>
+          <li>💳 <strong>Cards & accounts</strong> — ~${customers ?? "the"} new salary/savings accounts + credit cards.</li>
+          <li>🛡️ <strong>Insurance</strong> — home, life & property cover at possession.</li>
+          <li>🏪 <strong>Pop-up / kiosk</strong> — a desk at the project during booking & handover for footfall and on-site conversions.</li>
+        </ul>
+      </div>
+
+      <div class="lead-sec">
+        <div class="lead-sec-h">✅ Next step</div>
+        <div class="lead-dim">Contact <strong>${escapeHtml(l.promoter || "the builder")}</strong> to become the preferred partner — before competitors reach the buyers.</div>
+      </div>
+
+      <div class="lead-links">
+        ${mapsUrl ? `<a class="ghost mini" href="${mapsUrl}" target="_blank" rel="noopener"><i class="uil uil-map-marker"></i>View on Maps</a>` : ""}
+        <a class="ghost mini" href="${builderSearch}" target="_blank" rel="noopener"><i class="uil uil-search"></i>Find builder contact</a>
+      </div>
+      <div class="lead-disclaimer">Decision-support estimate. Verify units, price & builder details before acting.</div>
+    </div>`;
+  if (body) body.innerHTML = html;
+}
+
+function round1ui(n) { return Math.round(n * 10) / 10; }
+
+function renderLeadRadar(data) {
+  const resultEl = document.getElementById("radarResult");
+  const summaryEl = document.getElementById("radarSummary");
+  const listEl = document.getElementById("radarLeads");
+  const asOfEl = document.getElementById("radarAsOf");
+
+  // Center the map on the branch and drop a distinct anchor marker.
+  if (map && data.anchor) {
+    map.panTo({ lat: data.anchor.lat, lng: data.anchor.lng });
+    map.setZoom(13);
+    const anchor = new google.maps.Marker({
+      position: { lat: data.anchor.lat, lng: data.anchor.lng },
+      map,
+      title: `Branch: ${data.anchor.area}`,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#1a00d9", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 },
+    });
+    radarMarkers.push(anchor);
+  }
+
+  const n = data.leads.length;
+  summaryEl.innerHTML = `
+    <div class="rs-head"><i class="uil uil-chart-bar"></i><strong>${n}</strong> leads within ${data.radiusKm} km of ${escapeHtml(data.anchor.area)}</div>
+    <div class="rs-sub">Identifiable home-loan pipeline: <strong>₹${data.totalPipelineCr} Cr</strong></div>`;
+
+  // Cleaner, scannable cards. The ₹ opportunity is the hero; details live in the
+  // click-through panel. Click a card (or its pin) → opens the lead detail.
+  _radarLeads = data.leads;
+  listEl.innerHTML = data.leads.map((l, i) => {
+    const pool = (l.loanPoolLoCr != null && l.loanPoolHiCr != null)
+      ? `₹${l.loanPoolLoCr}–${l.loanPoolHiCr} Cr`
+      : "—";
+    return `
+      <li class="rec-item radar-lead" data-idx="${i}">
+        <div class="rec-rank">${i + 1}</div>
+        <div class="rec-body">
+          <div class="radar-card-top">
+            <span class="radar-proj">🏢 ${escapeHtml(l.projectName)}</span>
+            <span class="radar-pool">${pool}</span>
+          </div>
+          <div class="rec-meta">${l.units != null ? (l.unitsEstimated ? "~" : "") + l.units : "?"} units · ${escapeHtml(l.locality)} · ${l.distanceKm ?? "?"} km away</div>
+          <div class="rec-sub">${escapeHtml(l.promoter || "")}</div>
+          <div class="radar-card-cta">View details →</div>
+        </div>
+      </li>`;
+  }).join("") || `<li class="rec-item"><div class="rec-body">No new-construction leads found in this radius. Try a wider radius or a different branch.</div></li>`;
+
+  // Wire card clicks → open the lead detail panel.
+  listEl.querySelectorAll(".radar-lead").forEach((el) => {
+    el.onclick = () => openLeadDetail(_radarLeads[+el.dataset.idx], data);
+  });
+
+  // Drop a numbered pin per lead; clicking a pin opens the same detail panel.
+  data.leads.forEach((l, i) => {
+    if (l.lat == null || l.lng == null) return;
+    const m = new google.maps.Marker({
+      position: { lat: l.lat, lng: l.lng }, map,
+      label: { text: String(i + 1), color: "#fff", fontSize: "11px", fontWeight: "700" },
+      title: l.projectName,
+    });
+    m.addListener("click", () => openLeadDetail(l, data));
+    radarMarkers.push(m);
+  });
+
+  if (data.dataAsOf) {
+    const d = new Date(data.dataAsOf);
+    asOfEl.textContent = `RERA data for ${data.stateName} as of ${d.toLocaleDateString()} (refreshed weekly).`;
+  } else {
+    asOfEl.textContent = `RERA data for ${data.stateName} fetched live.`;
+  }
+  resultEl.classList.remove("hidden");
+}
+
 let lastLoanAnalysis = null;   // last collateral read, for share + PDF
 
 function setupLoan() {

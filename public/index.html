@@ -64,7 +64,16 @@
         <button id="weightSaveBtn" class="weight-save-btn"><i class="uil uil-check"></i>Save</button>
       </div>
 
-      <div class="settings-label">Scoring weights <span id="weightVerticalLabel" class="weight-vtag"></span></div>
+      <div class="settings-label">Visible modes</div>
+      <div class="settings-hint">Show or hide modes in the top toggle. Saved on this device — persists when you reopen the link.</div>
+      <div id="modeVisibility" class="mode-visibility">
+        <label><input type="checkbox" data-mode="finder" checked /> Site Finder</label>
+        <label><input type="checkbox" data-mode="planner" checked /> Expansion Planner</label>
+        <label><input type="checkbox" data-mode="loan" checked /> Collateral Check</label>
+        <label><input type="checkbox" data-mode="radar" checked /> Lead Radar</label>
+      </div>
+
+      <div class="settings-label" style="margin-top:14px">Scoring weights <span id="weightVerticalLabel" class="weight-vtag"></span></div>
       <div class="settings-hint">How much each factor counts toward the final score. Tuned per industry — change them to match your priorities. Scores update instantly.</div>
       <div id="weightSliders" class="weight-sliders"></div>
       <div class="weight-total-row">
@@ -83,6 +92,7 @@
         <button class="mode-btn active" data-mode="finder" title="Evaluate one location">Site Finder</button>
         <button class="mode-btn" data-mode="planner" title="Upload your network, find where to expand">Expansion Planner</button>
         <button class="mode-btn" data-mode="loan" title="Geographic risk read on loan collateral">Collateral Check</button>
+        <button class="mode-btn" data-mode="radar" title="New-construction loan leads near a branch">Lead Radar</button>
       </div>
 
       <!-- ===== SITE FINDER (single-location flow — the original UI) ===== -->
@@ -204,6 +214,32 @@
         <div id="loanProgress" class="progress-panel hidden"></div>
         <section id="loanResult" class="hidden"></section>
       </div><!-- /loanMode -->
+
+      <!-- ===== LEAD RADAR (new-construction loan leads near a branch) ===== -->
+      <div id="radarMode" class="hidden">
+        <p class="planner-lede">See newly RERA-registered buildings near a branch and the home-loan opportunity each one represents — your daily list of where loans will be needed.</p>
+        <div class="form-group">
+          <label>State (RERA source)</label>
+          <select id="radarState"></select>
+        </div>
+        <div class="form-group">
+          <label>Branch / area</label>
+          <input id="radarLocation" type="text" placeholder="e.g. Anna Nagar East, Chennai" />
+        </div>
+        <div class="form-group">
+          <label>Catchment radius: <span id="radarRadiusVal">5</span> km</label>
+          <input id="radarRadius" type="range" min="2" max="15" value="5" step="1" style="width:100%" />
+        </div>
+        <button id="radarRunBtn" class="primary"><i class="uil uil-bolt-alt"></i>Find leads</button>
+        <div id="radarStatus" class="status"></div>
+        <div id="radarProgress" class="progress-panel hidden"></div>
+        <section id="radarResult" class="hidden">
+          <div id="radarSummary" class="result-stats"></div>
+          <h3 style="margin-top:16px">🏢 New-construction leads</h3>
+          <ol id="radarLeads" class="rec-list"></ol>
+          <p id="radarAsOf" class="pin-hint" style="margin-top:10px"></p>
+        </section>
+      </div><!-- /radarMode -->
     </aside>
 
     <!-- Draggable divider between sidebar and map -->

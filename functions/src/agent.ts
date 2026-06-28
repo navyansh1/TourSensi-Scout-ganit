@@ -8,16 +8,20 @@ import { VertexAI } from "@google-cloud/vertexai";
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "toursensi-ganit-71c77";
 const LOCATION = "us-central1";
 
-// Main grounded queries used for the overall area summary.
+// Main grounded queries for the overall area summary. We keep all the HIGH-signal
+// drivers (transit, real-estate launches, SEZ/industrial, road infra, govt
+// incentives, recent news). We dropped only the two queries that are already
+// covered by HARD data we collect anyway — "demographic/population trends"
+// (we have WorldPop population) and "competitive landscape" (we have Google
+// Places competitor counts). So 8 → 6 with zero loss of unique insight, and the
+// higher concurrency below keeps it fast.
 const SEARCH_TEMPLATES = [
   "upcoming metro rail or rapid transit projects near {area}, {city}, India",
   "new residential or commercial real estate project launches near {area}, {city}",
   "Special Economic Zone, IT park, or industrial park announcements in {area}, {city}",
   "highway, flyover, or road infrastructure projects in {area}, {city}",
   "government incentives, subsidies, or policy changes affecting business in {area}, {city}",
-  "demographic and population growth trends {area}, {city}",
   "recent news in {area}, {city} in the last 30 days",
-  "competitive landscape and major brand expansion strategy in {area}, {city}",
 ];
 
 export interface AgentTrailItem {
@@ -99,28 +103,57 @@ export async function aiPropertyEstimate(area: string, city: string): Promise<Ai
     model: "gemini-2.5-flash",
     tools: [{ googleSearch: {} } as any],
   });
-  const prompt = `Using Google Search, estimate residential real-estate pricing in ${area}, ${city}, India.
+  // Ask for low/high AND a single best-estimate midpoint. We want a TIGHT answer
+  // for a specific locality, not a city-wide "₹5,000–15,000" band. We tell the
+  // model to narrow to the named locality and, if it can only find a wide range,
+  // to give the most-likely midpoint for THAT locality (not the whole city).
+  const prompt = `Using Google Search, find the typical residential price per sqft in the SPECIFIC locality "${area}", ${city}, India (not the whole city — narrow to this neighbourhood).
+Prefer a tight figure. If sources only give a wide range, return the most likely midpoint for THIS locality.
 Reply with ONLY JSON, no prose:
-{"medianPricePerSqft": <integer rupees per sqft, or null if unknown>, "avgBHK": <typical number of bedrooms as a decimal e.g. 2.5, or null>, "note": "<one short sentence on the local property market>"}`;
+{"medianPricePerSqft": <integer ₹/sqft best single estimate, or null>, "low": <integer ₹/sqft, or null>, "high": <integer ₹/sqft, or null>, "avgBHK": <decimal e.g. 2.5, or null>, "note": "<one short sentence on this locality's market>"}`;
 
-  try {
-    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+  const callOnce = async (text: string) => {
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text }] }] });
     const candidate: any = resp.response?.candidates?.[0];
-    const text = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-    const meta = candidate?.groundingMetadata ?? {};
+    const out = candidate?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
     const sources: { uri: string; title?: string }[] = [];
-    for (const c of meta.groundingChunks ?? []) {
+    for (const c of candidate?.groundingMetadata?.groundingChunks ?? []) {
       if (c.web?.uri) sources.push({ uri: c.web.uri, title: c.web.title });
     }
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const parsed = JSON.parse(m[0]);
-    const price = typeof parsed.medianPricePerSqft === "number" && parsed.medianPricePerSqft > 0 ? Math.round(parsed.medianPricePerSqft) : null;
-    if (price == null) return null; // nothing useful
+    const m = out.match(/\{[\s\S]*\}/);
+    return { parsed: m ? JSON.parse(m[0]) : null, sources };
+  };
+
+  // A range is "too wide" if high/low differ by more than ~1.6x — then we retry
+  // once with an even more specific prompt to narrow it.
+  const tooWide = (p: any) =>
+    typeof p?.low === "number" && typeof p?.high === "number" && p.low > 0 && p.high / p.low > 1.6;
+
+  try {
+    let { parsed, sources } = await callOnce(prompt);
+    if (parsed && tooWide(parsed)) {
+      const retry = `The range for "${area}", ${city} looks too wide (₹${parsed.low}–${parsed.high}/sqft). Using Google Search, narrow to the apartment ₹/sqft for THIS exact locality only and give the single most representative value.
+Reply with ONLY JSON: {"medianPricePerSqft": <integer>, "low": <integer>, "high": <integer>, "avgBHK": <decimal or null>, "note": "<one sentence>"}`;
+      const second = await callOnce(retry);
+      if (second.parsed) { parsed = second.parsed; sources = second.sources.length ? second.sources : sources; }
+    }
+    if (!parsed) return null;
+
+    // Best estimate: explicit midpoint, else mean of low/high, else null.
+    let price: number | null =
+      typeof parsed.medianPricePerSqft === "number" && parsed.medianPricePerSqft > 0
+        ? Math.round(parsed.medianPricePerSqft)
+        : typeof parsed.low === "number" && typeof parsed.high === "number"
+          ? Math.round((parsed.low + parsed.high) / 2)
+          : null;
+    if (price == null) return null;
+
+    const stillWide = tooWide(parsed);
     return {
       medianPricePerSqft: price,
       avgBHK: typeof parsed.avgBHK === "number" ? parsed.avgBHK : null,
-      note: String(parsed.note || "").slice(0, 200),
+      // Flag low-confidence when the band stayed wide, so the UI can show "approx".
+      note: (stillWide ? "(approx) " : "") + String(parsed.note || "").slice(0, 200),
       sources: sources.slice(0, 3),
     };
   } catch {
@@ -424,7 +457,7 @@ export interface AreaStats {
 export async function runGrowthAgent(opts: { area: string; city: string; extraContext?: string; contextBrief?: string; areaStats?: AreaStats }): Promise<AgentResult> {
   const queries = SEARCH_TEMPLATES.map(t => t.replace("{area}", opts.area).replace("{city}", opts.city));
 
-  // 8 grounded queries — capped at 4 concurrent so we don't hit Vertex 429s
+  // 6 grounded queries, run at high concurrency (see below)
   const groundedTasks = queries.map(q => async () => {
     try { return await groundedQuery(q); }
     catch (e) {
@@ -438,10 +471,14 @@ export async function runGrowthAgent(opts: { area: string; city: string; extraCo
     () => quadrantScore(opts.area, opts.city, label),
   );
 
-  // Run grounded queries first, then quadrants (sequential phases — avoids 12-way parallel burst)
-  // Cap at 3 concurrent so we leave headroom for the final synthesis call.
-  const trail = await runWithLimit(groundedTasks, 3);
-  const quadScores = await runWithLimit(quadTasks, 3);
+  // Run grounded queries and quadrant micro-runs TOGETHER (not sequential phases)
+  // at higher concurrency. Gemini Flash tolerates this; the occasional 429 is
+  // retried inside groundedQuery. This roughly halves wall-clock vs. the old
+  // 3-concurrent two-phase approach (~25s → ~10-12s).
+  const [trail, quadScores] = await Promise.all([
+    runWithLimit(groundedTasks, 8),
+    runWithLimit(quadTasks, 4),
+  ]);
   const [q1, q2, q3, q4] = quadScores;
 
   const quadrantScores = [

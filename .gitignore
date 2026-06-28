@@ -8,3 +8,7 @@ functions/node_modules/
 firebase-debug.log
 *.local
 .DS_Store
+*firebase-adminsdk*.json
+
+functions/scripts/_debug/
+functions/serviceAccount.json

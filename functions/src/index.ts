@@ -26,6 +26,8 @@ import { planExpansion } from "./portfolio";
 import { analyzeSite, type SiteAnalysisInput } from "./siteAnalysis";
 import { analyzeLoanCollateral, type LoanAnalysisInput, type CollateralType } from "./loanAnalysis";
 import { getRealEstateSignals } from "./realestate";
+import { getLeadRadar } from "./leadRadar";
+import { ALL_STATES } from "./rera";
 import { scoreHexes, topRecommendations, placeQuality, hexCenters } from "./scoring";
 import { waterCenters, centerKey } from "./water";
 import { classifyLandUse } from "./landuse";
@@ -509,6 +511,27 @@ router.post("/loan-analysis", async (req, res) => {
     res.json({ ...analysis, lat: plat, lng: plng, address: paddr });
   } catch (e) {
     console.error("loan-analysis failed:", e);
+    res.status(500).json({ error: String((e as Error).message) });
+  }
+});
+
+// Lead Radar — daily feed of new-construction loan opportunities near a branch.
+// Body: { query, state, radiusKm? }   e.g. { query: "Anna Nagar East, Chennai", state: "TN" }
+router.get("/lead-radar/states", (_req, res) => {
+  res.json({ states: ALL_STATES });
+});
+router.post("/lead-radar", async (req, res) => {
+  try {
+    const { query, state, radiusKm } = req.body as { query?: string; state?: string; radiusKm?: number };
+    if (!query || !state) { res.status(400).json({ error: "query and state are required" }); return; }
+    // Cache per anchor+state+radius for a day — RERA + ₹/sqft both move slowly.
+    // The v2 suffix busts stale cache after the geocode/₹ pipeline fixes.
+    const key = `v2__${state}__${query}__${radiusKm ?? 5}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    const result = await withCache("lead_radar", key, 864e5, () =>
+      getLeadRadar({ query, state, radiusKm }));
+    res.json(result);
+  } catch (e) {
+    console.error("lead-radar failed:", e);
     res.status(500).json({ error: String((e as Error).message) });
   }
 });

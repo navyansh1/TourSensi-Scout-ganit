@@ -1,8 +1,13 @@
-// MagicBricks + 99acres data via Apify actors. Results are cached in Firestore
-// (collection: realestate) keyed by city+area so we don't re-scrape on every click.
+// Real-estate ₹/sqft signals. Primary source is our own direct MagicBricks
+// scraper (free, no anti-bot — see magicbricks.ts); Apify's 99acres actor is an
+// optional fallback only (99acres 403-blocks direct access, and the actor is
+// paid/rate-limited, so we prefer the direct scrape). Results are cached in
+// Firestore (collection: realestate) keyed by city+area so we don't re-scrape
+// on every click.
 
 import { ApifyClient } from "apify-client";
 import * as admin from "firebase-admin";
+import { fetchMagicBricksDirect } from "./magicbricks";
 
 const ACRES99_ACTOR = "easyapi/99acres-com-scraper";
 
@@ -50,12 +55,17 @@ export async function getRealEstateSignals(opts: { city: string; area: string; f
     if (Date.now() - data.fetchedAt < fresh) return data;
   }
 
-  // MagicBricks Apify actor requires paid rental (free trial expired).
-  // 99acres free actor still works, so we use that alone for now.
-  const acres = await fetch99acres(opts).catch(() => null);
-
+  // Primary: our own direct MagicBricks scraper (free, reliable, no Apify).
   const sources: RealEstateSignals[] = [];
-  if (acres) sources.push(acres);
+  const mb = await fetchMagicBricksDirect(opts).catch(() => null);
+  if (mb && mb.sampleSize > 0) sources.push(mb);
+
+  // Fallback: Apify 99acres actor, only if the direct scrape returned nothing
+  // and a token is configured. Skipped entirely on the happy path.
+  if (!sources.length && process.env.APIFY_TOKEN) {
+    const acres = await fetch99acres(opts).catch(() => null);
+    if (acres) sources.push(acres);
+  }
 
   const merged = mergeSignals(opts, sources);
   await ref.set(merged);
