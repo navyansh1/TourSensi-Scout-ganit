@@ -23,6 +23,7 @@ export const DYNAMIC_STATES: Record<string, string> = {
   KA: "Karnataka",
   RJ: "Rajasthan",
   HR: "Haryana (Gurugram)",
+  WB: "West Bengal",
 };
 
 export const ALL_STATES: Record<string, string> = {

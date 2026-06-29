@@ -26,6 +26,7 @@ import * as admin from "firebase-admin";
 import { chromium, type Page } from "playwright";
 import type { ReraProject } from "../src/rera/types";
 import { tnAdapter } from "../src/rera/tn";
+import { wbAdapter } from "../src/rera/wb";
 
 if (!admin.apps.length) admin.initializeApp();
 // RERA cards can lack coords/units → fields come through as undefined. Tell
@@ -501,6 +502,8 @@ const SCRAPERS: Record<string, Scraper> = {
   HR: (p) => scrapeHR(p),
   // TN is a plain fetch (no browser) — reuse its adapter logic, ignore the page.
   TN: () => tnAdapter.fetchProjects(),
+  // WB is a plain fetch (no browser) — reuse its adapter logic, ignore the page.
+  WB: () => wbAdapter.fetchProjects(),
 };
 
 async function main() {
@@ -516,6 +519,7 @@ async function main() {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
   });
+  const emptyScrapes: string[] = [];
   for (const state of states) {
     const scraper = SCRAPERS[state];
     if (!scraper) {
@@ -528,6 +532,16 @@ async function main() {
       const known = new Set(existing.map((p) => p.regNo).filter(Boolean));
       console.log(`[${state}] scraping… (${full ? "full" : `incremental, ${known.size} cached`})`);
       const fresh = (await scraper(page, known)).filter((p) => p.projectName || p.regNo);
+      // Fail LOUD on an empty scrape. A portal that suddenly returns nothing
+      // (block, redesign, downtime — e.g. KA started serving a 39-byte shell)
+      // must NOT silently leave the old cache in place: in incremental mode that
+      // stale data masquerades as fresh leads. Skip the write so cache health
+      // shows the state as stale, and exit non-zero so a scheduled run alerts.
+      if (fresh.length === 0) {
+        console.error(`[${state}] ⚠ scrape returned 0 projects — portal blocked or changed? Leaving cache untouched, NOT overwriting.`);
+        emptyScrapes.push(state);
+        continue;
+      }
       // Merge new with existing (de-duped) so weekly runs append rather than replace.
       const merged = full ? fresh : mergeByReg(existing, fresh);
       await writeCache(state, merged);
@@ -539,9 +553,13 @@ async function main() {
   }
   await browser.close();
   console.log("RERA batch done.");
+  if (emptyScrapes.length) {
+    console.error(`\n⚠ ${emptyScrapes.length} state(s) returned NO projects: ${emptyScrapes.join(", ")}. Cache left stale — investigate the portal(s).`);
+    process.exitCode = 2; // signal partial failure to the scheduler
+  }
 }
 
-main().then(() => process.exit(0)).catch((e) => {
+main().then(() => process.exit(process.exitCode ?? 0)).catch((e) => {
   console.error(e);
   process.exit(1);
 });

@@ -1,6 +1,7 @@
 // Google Places (New) integration — pull competitor & relevant POI locations.
 
 import axios from "axios";
+import * as h3 from "h3-js";
 
 const PLACES_BASE = "https://places.googleapis.com/v1/places:searchText";
 
@@ -230,4 +231,82 @@ export async function brandLocationsInArea(opts: {
     }
   }
   return Array.from(map.values());
+}
+
+// --- No-build land from Google Places --------------------------------------
+// OSM polygons are patchy (a forest or campus may be untagged). Google, which we
+// already query for competitors, knows these big features well. We text-search a
+// handful of land-feature categories and trust ONLY results whose Google
+// `primaryType`/`types` mark them as genuinely unbuildable land. The matched
+// places' hexes are returned so the scorer can floor them red — a second,
+// independent vote alongside OSM and population density.
+//
+// We gate on Google's TYPE, not the search keyword, so a "city park cafe" (type
+// restaurant) doesn't get treated as a park.
+//
+// IMPORTANT — only land that's unbuildable AND not a demand magnet belongs here.
+// Deliberately EXCLUDED: university and hospital. You can't build a store INSIDE
+// the campus, but the gate/perimeter is prime (captive student/patient footfall).
+// Flagging them no-build would wrongly kill the best ATM/grocery sites in town.
+// Those are handled as positive demand context elsewhere, not penalised here.
+const NO_BUILD_GOOGLE_TYPES = new Set<string>([
+  "airport", "international_airport",
+  "national_park", "state_park",
+  "natural_feature", "campground", "forest",
+  "military_base",
+]);
+
+// Search phrases that tend to surface these land features near a centre.
+const NO_BUILD_QUERIES = [
+  "airport", "national park", "forest",
+  "nature reserve", "military cantonment",
+];
+
+export async function noBuildPlacesHexes(opts: {
+  centerLat: number;
+  centerLng: number;
+  radiusM?: number;
+  hexRes?: number;
+}): Promise<Set<string>> {
+  const res = opts.hexRes ?? 8;
+  const flagged = new Set<string>();
+  if (!KEY()) return flagged;
+
+  const lists = await Promise.all(
+    NO_BUILD_QUERIES.map(q =>
+      searchPlaces({
+        query: q,
+        centerLat: opts.centerLat,
+        centerLng: opts.centerLng,
+        radiusM: opts.radiusM ?? 8000,
+        maxResults: 10,
+        hardFilter: true,
+      }).catch(() => [] as Poi[]),
+    ),
+  );
+
+  // Large-footprint features span many hexes, but Places gives us only a single
+  // centroid point. For these, flag the centroid's hex AND its surrounding ring
+  // so a campus/airport doesn't leave its edges green. Point-like features (a
+  // single hospital building) flag only their own hex.
+  const LARGE_FOOTPRINT = new Set<string>([
+    "airport", "international_airport", "national_park",
+    "state_park", "military_base", "forest", "campground",
+  ]);
+
+  for (const list of lists) {
+    for (const p of list) {
+      const t = (p.primaryType ?? "").toLowerCase();
+      // searchPlaces only returns primaryType in its mask; treat that as the
+      // authoritative type signal here.
+      if (!NO_BUILD_GOOGLE_TYPES.has(t)) continue;
+      const center = h3.latLngToCell(p.lat, p.lng, res);
+      if (LARGE_FOOTPRINT.has(t)) {
+        for (const h of h3.gridDisk(center, 1)) flagged.add(h); // center + 6 neighbours
+      } else {
+        flagged.add(center);
+      }
+    }
+  }
+  return flagged;
 }

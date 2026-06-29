@@ -161,6 +161,28 @@ Reply with ONLY JSON: {"medianPricePerSqft": <integer>, "low": <integer>, "high"
   }
 }
 
+// Last-resort slug resolver: when every deterministic MagicBricks URL variant
+// 404s (~5% of locations — odd spellings like "HITEC City"), ask Gemini for the
+// canonical URL slug. One tiny call, no grounding, cheap; the caller caches the
+// result so an area never needs this twice. Returns just the slug body
+// (e.g. "hitech-city-hyderabad") or null.
+export async function aiResolveSlug(area: string, city: string): Promise<string | null> {
+  try {
+    const model = vertex().getGenerativeModel({ model: "gemini-2.5-flash" });
+    const prompt = `MagicBricks.com property URLs look like "property-for-sale-in-<SLUG>-pppfs", where <SLUG> is "<locality>-<city>" in lowercase hyphenated form using the spelling MagicBricks uses (often older city names, e.g. "bangalore" not "bengaluru", "gurgaon" not "gurugram").
+Give the most likely <SLUG> for locality "${area}" in city "${city}", India.
+Reply with ONLY the slug, nothing else. Example: hitech-city-hyderabad`;
+    const resp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    const out: string =
+      resp.response?.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+    const slug = out.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "");
+    // Sanity: must look like "<word>-...-<word>", not empty or a sentence.
+    return slug.length >= 4 && slug.length <= 80 && slug.includes("-") ? slug : null;
+  } catch {
+    return null;
+  }
+}
+
 // Best-effort grounded INCOME context for an area. Real household-income data
 // (GeoIQ, telco) costs lakhs/yr and is a black box; instead we ASK Google Search
 // per call for whatever income evidence exists. In practice this returns
@@ -489,7 +511,10 @@ export async function runGrowthAgent(opts: { area: string; city: string; extraCo
   ];
   const overallGrowth = Math.round(quadrantScores.reduce((s, q) => s + q.growthScore, 0) / 4);
 
-  const executive = await synthesize(opts, trail, overallGrowth, opts.contextBrief, opts.areaStats);
+  const executive = reconcileVerdict(
+    await synthesize(opts, trail, overallGrowth, opts.contextBrief, opts.areaStats),
+    opts.areaStats,
+  );
 
   return {
     area: opts.area,
@@ -573,6 +598,27 @@ Style rules:
     }
   }
   return defaultExec(growthScore);
+}
+
+// Bind the AI's headline verdict to the actual best site score so the banner
+// can't say "Highly Recommended / 4★" over a mediocre top score. The agent is
+// already told not to force a GO on a weak area, but nothing caps its UPSIDE —
+// so a best-zone of 71 still produced GO + 4 stars. We clamp (never inflate):
+//  best >=75 → GO ok, up to 5★ | 60-74 → max CAUTION, 3★ | 50-59 → CAUTION, 2-3★
+//  <50 → AVOID, max 2★. When bestFinal is unknown we leave the AI's call alone.
+export function reconcileVerdict(ex: ExecutiveSummary, areaStats?: AreaStats): ExecutiveSummary {
+  const best = areaStats?.bestFinal;
+  if (typeof best !== "number") return ex;
+
+  let recommendation = ex.recommendation;
+  let starCap = 5;
+  if (best < 50) { recommendation = "AVOID"; starCap = 2; }
+  else if (best < 60) { if (recommendation === "GO") recommendation = "CAUTION"; starCap = 3; }
+  else if (best < 75) { if (recommendation === "GO") recommendation = "CAUTION"; starCap = 3; }
+  // best >= 75: GO is allowed; no cap beyond the natural 5.
+
+  const rating = Math.max(1, Math.min(ex.rating, starCap));
+  return { ...ex, recommendation, rating };
 }
 
 // Extract the first JSON object from a string, handling ```json fences

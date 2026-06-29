@@ -8,6 +8,7 @@
 import { ApifyClient } from "apify-client";
 import * as admin from "firebase-admin";
 import { fetchMagicBricksDirect } from "./magicbricks";
+import { aiResolveSlug } from "./agent";
 
 const ACRES99_ACTOR = "easyapi/99acres-com-scraper";
 
@@ -56,8 +57,10 @@ export async function getRealEstateSignals(opts: { city: string; area: string; f
   }
 
   // Primary: our own direct MagicBricks scraper (free, reliable, no Apify).
+  // Pass the AI slug resolver as a last-resort fallback for odd-spelling
+  // localities whose deterministic URL variants all 404 (~5% of cases).
   const sources: RealEstateSignals[] = [];
-  const mb = await fetchMagicBricksDirect(opts).catch(() => null);
+  const mb = await fetchMagicBricksDirect(opts, aiResolveSlug).catch(() => null);
   if (mb && mb.sampleSize > 0) sources.push(mb);
 
   // Fallback: Apify 99acres actor, only if the direct scrape returned nothing

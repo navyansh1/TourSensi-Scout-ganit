@@ -79,6 +79,21 @@ function localityToken(p: ReraProject, city: string): string {
   return parts.sort((a, b) => b.length - a.length)[0] || raw.slice(0, 40);
 }
 
+// Government / public-housing schemes are not home-loan leads (subsidised units,
+// no individual mortgage pipeline) — and they pollute the list with duplicate,
+// un-locatable entries. Drop them by promoter or project-name pattern.
+const GOVT_SCHEME_RE =
+  /\b(housing\s+board|housing\s+corporation|rajiv\s+gandhi|slum\s+(board|clearance)|awas\s+yojana|pmay|pradhan\s+mantri|multi[\s-]*stor(e?y|ied)\s+.*housing|state\s+housing|development\s+authority\s+scheme|public\s+housing)\b/i;
+function isGovtScheme(p: ReraProject): boolean {
+  return GOVT_SCHEME_RE.test(p.promoter || "") || GOVT_SCHEME_RE.test(p.projectName || "");
+}
+
+// A geocode result that lands on (or essentially on) the anchor's own city
+// centroid means Google couldn't place the project — it just returned the city.
+// Those leads are noise: they cluster at one bogus point and get the wrong ₹.
+// ~700 m is well inside any real "this is a distinct building" threshold.
+const CENTROID_EPSILON_KM = 0.7;
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -130,12 +145,19 @@ export async function getLeadRadar(opts: {
     getReraAsOf(stateCode),
   ]);
 
-  // Geocode candidate localities and keep those inside the radius. We cap how many
-  // we geocode (cost control) by first keeping projects that even mention the city.
+  // Geocode candidate localities and keep those inside the radius.
+  //
+  // We can't pre-filter by "city appears in the address" — several state portals
+  // (KA, WB) store only "<project name>, <state>" with no city/locality, so that
+  // filter silently dropped every real project and kept only ones with the city
+  // baked into their NAME (e.g. govt "… Bengaluru Housing Programme" schemes).
+  // Instead: drop govt schemes up front, prefer projects whose text mentions the
+  // city (they're more likely truly near the branch), then top up with the rest,
+  // and let the radius + centroid checks below do the real geographic filtering.
   const cityLc = anchor.city.toLowerCase();
-  const candidates = projects
-    .filter((p) => (p.address || p.locality || "").toLowerCase().includes(cityLc))
-    .slice(0, 60);
+  const usable = projects.filter((p) => !isGovtScheme(p));
+  const mentionsCity = (p: ReraProject) => (p.address || p.locality || "").toLowerCase().includes(cityLc);
+  const candidates = [...usable.filter(mentionsCity), ...usable.filter((p) => !mentionsCity(p))].slice(0, 60);
 
   // Resolve each candidate (geocode + ₹/sqft + ₹ pool) CONCURRENTLY with a small
   // limit — the old serial await-in-loop made dense areas take 30-60s.
@@ -153,6 +175,13 @@ export async function getLeadRadar(opts: {
       if (!g) return null;
       lat = g.lat;
       lng = g.lng;
+      // If geocoding only resolved to the city itself (broad match) or landed
+      // essentially on the anchor's centroid, we don't actually know where this
+      // project is — it would otherwise show up as a bogus cluster all at the
+      // same distance with the wrong ₹/sqft. Drop it rather than fake a location.
+      if (g.broad || haversineKm(anchor, { lat, lng }) < CENTROID_EPSILON_KM) {
+        return null;
+      }
     }
     const distanceKm = haversineKm(anchor, { lat, lng });
     if (distanceKm > radiusKm) return null;

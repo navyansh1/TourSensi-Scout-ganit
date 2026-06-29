@@ -21,7 +21,15 @@
 
 import axios from "axios";
 
-const OVERPASS = "https://overpass-api.de/api/interpreter";
+// Multiple Overpass mirrors, tried in order. The primary frequently returns
+// 429/406 under load — when that happens silently, no-build filtering is lost
+// and forests/campuses score green. Falling back to a mirror keeps the filter
+// working instead of failing open on the first throttle.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
 const OVERPASS_HEADERS = {
   "Content-Type": "text/plain",
   "User-Agent": "GeoScoutIQ/1.0 (contact: navyvibrance@gmail.com)",
@@ -51,8 +59,25 @@ function buildQuery(bbox: { south: number; west: number; north: number; east: nu
   way["landuse"="railway"]${b};
   way["landuse"="forest"]${b};
   way["natural"="wood"]${b};
+  // Protected green land — you can't open a shop inside a reserve or city forest,
+  // and there's no demand there either.
+  way["leisure"="nature_reserve"]${b};
+  way["boundary"="protected_area"]${b};
+  way["boundary"="national_park"]${b};
+  // Military / cantonment land — sealed, not leasable retail.
+  way["landuse"="military"]${b};
+  way["military"]${b};
   relation["aeroway"="aerodrome"]${b};
+  relation["leisure"="nature_reserve"]${b};
+  relation["boundary"="protected_area"]${b};
+  relation["boundary"="national_park"]${b};
+  relation["landuse"="military"]${b};
 );
+// NOTE: universities, hospitals and ordinary parks are deliberately NOT no-build.
+// You can't build INSIDE them, but their edges/gates are prime sites (captive
+// footfall). Their interior hexes already score low naturally (≈0 population, no
+// POIs) while the gate scores high — exactly right. Flagging them no-build would
+// wrongly kill the best ATM/grocery sites next to a campus or hospital.
 out geom;`;
 }
 
@@ -72,27 +97,37 @@ function isWater(tags: Record<string, string> | undefined): boolean {
 async function fetchRings(bbox: { south: number; west: number; north: number; east: number }): Promise<{ water: Ring[]; noBuild: Ring[] }> {
   const water: Ring[] = [];
   const noBuild: Ring[] = [];
+  const query = buildQuery(bbox);
+  let elements: any[] = [];
+  // RACE all mirrors at once (was: try sequentially with a 30s timeout each,
+  // which cost ~40s when the primary hung before a mirror answered). Each call
+  // gets a tight 8s budget — Overpass answers fast or not at all. We take the
+  // first response that actually has data; if all fail we fail open (empty).
+  const attempts = OVERPASS_ENDPOINTS.map(endpoint =>
+    axios.post(endpoint, query, { headers: OVERPASS_HEADERS, timeout: 8_000 })
+      .then(resp => {
+        const els: any[] = resp.data?.elements ?? [];
+        if (!els.length) throw new Error("empty");   // reject so Promise.any skips it
+        return els;
+      }),
+  );
   try {
-    const resp = await axios.post(OVERPASS, buildQuery(bbox), {
-      headers: OVERPASS_HEADERS,
-      timeout: 30_000,
-    });
-    const elements: any[] = resp.data?.elements ?? [];
-    for (const el of elements) {
-      const target = isWater(el.tags) ? water : noBuild;
-      if (Array.isArray(el.geometry) && el.geometry.length >= 3) {
-        target.push(el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
-      }
-      if (Array.isArray(el.members)) {
-        for (const m of el.members) {
-          if (m.role === "outer" && Array.isArray(m.geometry) && m.geometry.length >= 3) {
-            target.push(m.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
-          }
+    elements = await Promise.any(attempts);
+  } catch {
+    // every mirror failed or returned empty — fail open
+  }
+  for (const el of elements) {
+    const target = isWater(el.tags) ? water : noBuild;
+    if (Array.isArray(el.geometry) && el.geometry.length >= 3) {
+      target.push(el.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
+    }
+    if (Array.isArray(el.members)) {
+      for (const m of el.members) {
+        if (m.role === "outer" && Array.isArray(m.geometry) && m.geometry.length >= 3) {
+          target.push(m.geometry.map((g: any) => ({ lat: g.lat, lng: g.lon })));
         }
       }
     }
-  } catch {
-    // fail open
   }
   return { water, noBuild };
 }

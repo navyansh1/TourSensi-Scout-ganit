@@ -15,7 +15,7 @@ import cors from "cors";
 
 import { geocodeIndia } from "./geocode";
 import { COMPANIES, getCompany, VERTICAL_PLACES_TYPE, VERTICAL_WEIGHTS, VERTICAL_ECONOMICS, type Vertical } from "./companies";
-import { competitorsInArea, brandLocationsInArea } from "./places";
+import { competitorsInArea, brandLocationsInArea, noBuildPlacesHexes } from "./places";
 import { osmPois } from "./osm";
 import { fetchContextPois, areaContextBrief } from "./context";
 import { bboxPopulation, densityToDemand } from "./worldpop";
@@ -190,17 +190,22 @@ router.post("/analyze-stream", async (req, res) => {
 
     send("progress", { step: "score", label: "📊 Scoring hexes…" });
     const centers = hexCenters(geo.bbox);
-    const [oceanSet, landUse, jrcWater] = await Promise.all([
+    const [oceanSet, landUse, jrcWater, googleNoBuild] = await Promise.all([
       oceanHexes(geo.bbox, centers),
       classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
       // Satellite surface-water (JRC) — catches seasonal rivers/lakes that OSM
       // misses in rural India (e.g. the Cheyyar). Fails open to empty.
       jrcWaterHexes(centers).catch(() => new Set<string>()),
+      // Google Places no-build vote — catches airports/forests/military that OSM
+      // may not tag. Universities & hospitals are intentionally NOT in this set
+      // (their gates are prime sites). Fails open to empty.
+      noBuildPlacesHexes({ centerLat: geo.lat, centerLng: geo.lng }).catch(() => new Set<string>()),
     ]);
     // Exclude (remove) = open ocean (elevation) + OSM water + JRC satellite water.
-    // Penalise (floor to red, keep on map) = railway/airport/forest.
+    // Penalise (floor to red, keep on map) = airport/forest/military, from OSM
+    // and Google agreeing — genuinely dead land only.
     const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes, ...jrcWater]);
-    const penalizeHexes = landUse.noBuildHexes;
+    const penalizeHexes = new Set<string>([...landUse.noBuildHexes, ...googleNoBuild]);
     const hexes = scoreHexes({
       vertical, bbox: geo.bbox,
       center: { lat: geo.lat, lng: geo.lng },
@@ -333,13 +338,14 @@ router.post("/analyze", async (req, res) => {
     };
 
     const centers = hexCenters(geo.bbox);
-    const [oceanSet, landUse, jrcWater] = await Promise.all([
+    const [oceanSet, landUse, jrcWater, googleNoBuild] = await Promise.all([
       oceanHexes(geo.bbox, centers),
       classifyLandUse(geo.bbox, centers).catch(() => ({ waterHexes: new Set<string>(), noBuildHexes: new Set<string>() })),
       jrcWaterHexes(centers).catch(() => new Set<string>()),
+      noBuildPlacesHexes({ centerLat: geo.lat, centerLng: geo.lng }).catch(() => new Set<string>()),
     ]);
     const excludeHexes = new Set<string>([...oceanSet, ...landUse.waterHexes, ...jrcWater]);
-    const penalizeHexes = landUse.noBuildHexes;
+    const penalizeHexes = new Set<string>([...landUse.noBuildHexes, ...googleNoBuild]);
     const hexes = scoreHexes({
       vertical,
       bbox: geo.bbox,

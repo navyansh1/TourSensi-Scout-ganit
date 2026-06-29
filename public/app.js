@@ -848,7 +848,12 @@ function showPoiListPopup(title, list, accent) {
 function renderAvoidList(data) {
   const el = document.getElementById("avoidList");
   if (!el) return;
-  const sorted = [...data.hexes].sort((a, b) => a.final - b.final);
+  // Only genuinely weak zones qualify as "avoid". A zone scoring 50+ is "Decent"
+  // by our own heatmap legend, so calling it avoid contradicts the map. Gate on
+  // <50 ("Marginal"/"Avoid" bands) — when the whole area is decent we show the
+  // reassuring empty message rather than inventing three bad zones.
+  const AVOID_CEILING = 50;
+  const sorted = [...data.hexes].filter(h => h.final < AVOID_CEILING).sort((a, b) => a.final - b.final);
   const picks = [];
   for (const h of sorted) {
     if (picks.length >= 3) break;
